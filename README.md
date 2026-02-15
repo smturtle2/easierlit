@@ -1,12 +1,51 @@
+[English](README.md) | [한국어](README.ko.md)
+
 # Easierlit
 
-Easierlit is a thin wrapper over Chainlit for writing Python-first chat apps with a simple split:
+[![Version](https://img.shields.io/badge/version-0.1.0-2563eb)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-0ea5e9)](pyproject.toml)
+[![Chainlit](https://img.shields.io/badge/chainlit-2.9%20to%203-10b981)](https://docs.chainlit.io)
 
-- `EasierlitServer`: runs the Chainlit server in the main process.
-- `EasierlitClient`: runs your app logic (`run_func`) in a worker.
-- `EasierlitApp`: bridges incoming user messages and outgoing commands.
+Easierlit is a Python-first wrapper around Chainlit.
+It keeps the power of Chainlit while reducing the boilerplate for worker loops, message flow, auth, and persistence.
 
-This README documents **Easierlit v0.1.0**.
+## Quick Links
+
+- Installation: [Install](#install)
+- Start in 60 seconds: [Quick Start](#quick-start-60-seconds)
+- Method contracts: [`docs/api-reference.en.md`](docs/api-reference.en.md)
+- Full usage guide: [`docs/usage.en.md`](docs/usage.en.md)
+- Korean docs: [`README.ko.md`](README.ko.md), [`docs/api-reference.ko.md`](docs/api-reference.ko.md), [`docs/usage.ko.md`](docs/usage.ko.md)
+
+## Why Easierlit
+
+- Clear runtime split:
+- `EasierlitServer`: runs Chainlit in the main process.
+- `EasierlitClient`: runs your `run_func(app)` in one global worker.
+- `EasierlitApp`: queue bridge for inbound/outbound communication.
+- Production-oriented defaults:
+- headless server mode
+- sidebar default state `open`
+- JWT secret auto-management (`.chainlit/jwt.secret`)
+- dedicated auth cookie (`easierlit_access_token`)
+- fail-fast worker policy
+- Practical persistence behavior:
+- default SQLite bootstrap (`.chainlit/easierlit.db`)
+- schema compatibility recovery
+- SQLite `tags` normalization for thread CRUD
+
+## Architecture at a Glance
+
+```text
+User UI
+  -> Chainlit callbacks (on_message / on_chat_start / ...)
+  -> Easierlit runtime bridge
+  -> EasierlitApp incoming queue
+  -> run_func(app) in worker (thread/process)
+  -> app.send(...) / client.* CRUD
+  -> runtime dispatcher
+  -> realtime session OR data-layer fallback
+```
 
 ## Install
 
@@ -17,10 +56,10 @@ pip install easierlit
 For local development:
 
 ```bash
-pip install -e .
+pip install -e ".[dev]"
 ```
 
-## 60-Second Quick Start
+## Quick Start (60 Seconds)
 
 ```python
 from easierlit import AppClosedError, EasierlitClient, EasierlitServer
@@ -44,19 +83,8 @@ def run_func(app):
 
 client = EasierlitClient(run_func=run_func, worker_mode="thread")
 server = EasierlitServer(client=client)
-server.serve()
+server.serve()  # blocking
 ```
-
-## Core Concepts
-
-- `run_func(app)` is your main loop.
-- `app.recv()` blocks until a user message arrives.
-- `app.send()` and related APIs emit assistant-side output.
-- `server.serve()` is blocking and starts Chainlit headless.
-
-Lifecycle summary:
-
-`server.serve()` -> Chainlit callbacks -> `app.recv()` in worker -> `app.send()` / `client.*` CRUD
 
 ## Public API (v0.1.0)
 
@@ -82,27 +110,31 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(enabled=True, sqlite_path=".chainlit/easierlit.db")
 ```
 
+For exact method contracts, use:
+
+- `docs/api-reference.en.md`
+
+This includes parameter constraints, return semantics, exceptions, side effects, concurrency notes, and failure-mode fixes for each public method.
+
 ## Auth and Persistence Defaults
 
-- JWT secret is auto-managed at `.chainlit/jwt.secret`.
-- Auth cookie name is fixed to `easierlit_access_token`.
-- Default persistence is SQLite at `.chainlit/easierlit.db`.
-- If SQLite schema is incompatible, Easierlit recreates it with backup.
-- Sidebar default state is forced to `open`.
+- JWT secret: auto-managed at `.chainlit/jwt.secret`
+- Auth cookie: `easierlit_access_token`
+- Default persistence: SQLite at `.chainlit/easierlit.db`
+- If SQLite schema is incompatible, Easierlit recreates DB with backup
+- Sidebar default state is forced to `open`
 
-## Thread History Visibility
-
-Chainlit shows Thread History when both conditions are true:
+Thread History sidebar visibility follows Chainlit policy:
 
 - `requireLogin=True`
 - `dataPersistence=True`
 
-In Easierlit, this usually means:
+Typical Easierlit setup:
 
 - set `auth=EasierlitAuthConfig(...)`
 - keep persistence enabled (default)
 
-## Message CRUD and Thread CRUD
+## Message and Thread Operations
 
 Message APIs:
 
@@ -113,72 +145,59 @@ Message APIs:
 - `client.update_message(...)`
 - `client.delete_message(...)`
 
-Thread APIs (via data layer):
+Thread APIs:
 
 - `client.list_threads(...)`
 - `client.get_thread(thread_id)`
 - `client.update_thread(...)`
 - `client.delete_thread(thread_id)`
 
-Important runtime behavior:
+Behavior highlights:
 
-- With auth configured, `client.update_thread(...)` auto-assigns ownership to the auth user.
-- For SQLite SQLAlchemyDataLayer, Easierlit auto serializes/deserializes thread `tags`.
-- If no active websocket session exists, Easierlit runs data-layer message fallback with internal HTTP context initialization.
+- With auth enabled, `client.update_thread(...)` auto-assigns thread ownership.
+- SQLite SQLAlchemyDataLayer path auto normalizes thread `tags`.
+- If no active websocket session exists, Easierlit applies internal HTTP-context fallback for data-layer message CRUD.
 
 ## Worker Failure Policy
 
-Easierlit is fail-fast:
+Easierlit uses fail-fast behavior for worker crashes.
 
-- If `run_func` raises, server shutdown is triggered immediately.
-- UI receives a short summary when possible.
-- Full traceback is logged on the server side.
+- If `run_func` raises, server shutdown is triggered.
+- UI gets a short summary when possible.
+- Full traceback is kept in server logs.
 
-## Message vs Tool Call in Chainlit
+## Chainlit Message vs Tool-call
 
-Chainlit distinguishes these at the step type level.
+Chainlit distinguishes message and tool/run categories at step type level.
 
-Message types:
+Message steps:
 
 - `user_message`
 - `assistant_message`
 - `system_message`
 
-Tool/run types include:
+Tool/run family includes:
 
-- `tool`
-- `run`
-- `llm`
-- `retrieval`
-- `embedding`
-- `rerank`
+- `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.1.0 behavior:
-
-- `app.recv()` consumes user-message flow.
-- `app.send()` and `client.add_message()` produce assistant-message flow.
-- Easierlit public API does **not** expose a dedicated tool-call step creation API yet.
-
-UI rendering note (Chainlit): `ui.cot` supports `full`, `tool_call`, `hidden`.
+Easierlit v0.1.0 currently provides message-centric public APIs.
+A dedicated tool-call step creation public API is not provided yet.
 
 ## Example Map
 
-- `examples/minimal.py`: basic echo bot.
-- `examples/custom_auth.py`: single-account auth setup.
-- `examples/thread_crud.py`: list/get/update/delete thread flow.
-- `examples/thread_create_in_run_func.py`: create a new thread from `run_func`.
+- `examples/minimal.py`: basic echo bot
+- `examples/custom_auth.py`: single-account auth
+- `examples/thread_crud.py`: thread list/get/update/delete
+- `examples/thread_create_in_run_func.py`: create thread from `run_func`
 
-## Documentation
+## Documentation Map
 
-- API reference (EN, method-level contracts): `docs/api-reference.en.md`
-- API reference (KO): `docs/api-reference.ko.md`
-- Detailed guide (EN): `docs/usage.en.md`
-- Korean overview: `README.ko.md`
-- Detailed guide (KO): `docs/usage.ko.md`
+- Method-level API contracts (EN): `docs/api-reference.en.md`
+- Method-level API contracts (KO): `docs/api-reference.ko.md`
+- Full usage guide (EN): `docs/usage.en.md`
+- Full usage guide (KO): `docs/usage.ko.md`
 
-For exact method contracts (parameters, returns, raises, failure modes), use API Reference first.
+## Migration Note
 
-## Migration Notes
-
-Removed APIs from older drafts are not part of v0.1.0 public usage.
-Use only the APIs documented above.
+Removed APIs from earlier drafts are not part of v0.1.0 public usage.
+Use the APIs documented in this README and API Reference.
