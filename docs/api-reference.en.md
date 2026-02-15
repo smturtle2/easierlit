@@ -1,6 +1,6 @@
-# Easierlit API Reference (v0.1.0)
+# Easierlit API Reference (v0.2.0)
 
-This document defines method-level contracts for Easierlit v0.1.0.
+This document defines method-level contracts for Easierlit v0.2.0.
 
 ## 1. Scope and Contract Notation
 
@@ -155,8 +155,9 @@ server.serve()  # blocking
 
 ```python
 EasierlitClient(
-    run_func: Callable[[EasierlitApp], None],
+    run_func: Callable[[EasierlitApp], Any],
     worker_mode: Literal["thread", "process"] = "thread",
+    run_func_mode: Literal["auto", "sync", "async"] = "auto",
 )
 ```
 
@@ -170,21 +171,27 @@ EasierlitClient(
 - Parameters
 - `run_func`: function executed by worker.
 - `worker_mode`: `"thread"` or `"process"`.
+- `run_func_mode`:
+  - `"auto"`: execute sync function directly; await async result automatically.
+  - `"sync"`: require non-awaitable return from `run_func`.
+  - `"async"`: require awaitable return from `run_func`.
 
 - Returns
 - `None` (constructor).
 
 - Raises
-- `ValueError` if `worker_mode` is not `"thread"` or `"process"`.
+- `ValueError` if `worker_mode` is not `"thread"`/`"process"`, or if `run_func_mode` is invalid.
 
 - Side effects
 - Initializes worker/error state and runtime handle.
 
 - Concurrency/worker notes
 - In `process` mode, `run_func` must be picklable when `run(...)` starts.
+- In `"auto"` mode, async `run_func` is supported in both thread/process workers.
 
 - Failure modes and fixes
 - Invalid worker mode: use exact string values.
+- Invalid `run_func_mode`: use `"auto"`, `"sync"`, or `"async"`.
 
 - Examples
 
@@ -196,6 +203,14 @@ client = EasierlitClient(run_func=my_run_func, worker_mode="thread")
 # Edge/failure
 try:
     EasierlitClient(run_func=my_run_func, worker_mode="async")
+except ValueError:
+    ...
+```
+
+```python
+# Edge/failure
+try:
+    EasierlitClient(run_func=my_run_func, run_func_mode="invalid")
 except ValueError:
     ...
 ```
@@ -841,7 +856,56 @@ except Exception as exc:
     print(type(exc).__name__)  # TimeoutError or AppClosedError
 ```
 
-### 4.2 `EasierlitApp.send`
+### 4.2 `EasierlitApp.arecv`
+
+- Signature
+
+```python
+async def arecv(self, timeout: float | None = None) -> IncomingMessage
+```
+
+- Purpose
+- Async variant of `recv()` for async `run_func`.
+
+- When to call / When not to call
+- Call inside async worker loop.
+- Do not call after app is closed.
+
+- Parameters
+- `timeout`: seconds to wait; `None` blocks indefinitely.
+
+- Returns
+- `IncomingMessage`.
+
+- Raises
+- `TimeoutError` when timed wait expires.
+- `AppClosedError` when app is closed or close sentinel received.
+
+- Side effects
+- Dequeues one inbound item.
+
+- Concurrency/worker notes
+- Bridges blocking queue get through `asyncio.to_thread`.
+
+- Failure modes and fixes
+- Frequent timeouts: expected in idle loops; continue loop.
+- Closed app: break loop cleanly.
+
+- Examples
+
+```python
+incoming = await app.arecv()
+```
+
+```python
+# Edge/failure
+try:
+    await app.arecv(timeout=0.1)
+except Exception as exc:
+    print(type(exc).__name__)  # TimeoutError or AppClosedError
+```
+
+### 4.3 `EasierlitApp.send`
 
 - Signature
 
@@ -898,7 +962,7 @@ except TypeError:
     ...
 ```
 
-### 4.3 `EasierlitApp.update_message`
+### 4.4 `EasierlitApp.update_message`
 
 - Signature
 
@@ -952,7 +1016,7 @@ except AppClosedError:
     ...
 ```
 
-### 4.4 `EasierlitApp.delete_message`
+### 4.5 `EasierlitApp.delete_message`
 
 - Signature
 
@@ -1000,7 +1064,7 @@ except AppClosedError:
     ...
 ```
 
-### 4.5 `EasierlitApp.close`
+### 4.6 `EasierlitApp.close`
 
 - Signature
 
@@ -1047,7 +1111,7 @@ app.close()
 app.close()
 ```
 
-### 4.6 `EasierlitApp.is_closed`
+### 4.7 `EasierlitApp.is_closed`
 
 - Signature
 
@@ -1148,7 +1212,7 @@ IncomingMessage(
 ```
 
 - Contract
-- Produced by Chainlit callback pipeline and consumed by `app.recv()`.
+- Produced by Chainlit callback pipeline and consumed by `app.recv()`/`app.arecv()`.
 
 ### 5.4 `OutgoingCommand`
 
@@ -1173,13 +1237,13 @@ OutgoingCommand(
 
 | Exception | Typical Trigger | Primary Fix |
 | --- | --- | --- |
-| `ValueError` | Invalid `worker_mode`, missing user, missing thread, invalid auth fields | Correct inputs, check identifiers/thread ids |
+| `ValueError` | Invalid `worker_mode`/`run_func_mode`, missing user, missing thread, invalid auth fields | Correct inputs, check identifiers/thread ids |
 | `WorkerAlreadyRunningError` | `client.run()` called while worker alive | Call `client.stop()` first |
 | `RunFuncExecutionError` | Worker crashed and surfaced on `stop()` | Inspect traceback (`peek_worker_error()`), fix `run_func` |
 | `DataPersistenceNotEnabledError` | Thread CRUD called without data layer | Enable persistence or configure external data layer |
 | `ThreadSessionNotActiveError` | Message CRUD with no active session and no data layer | Use active session or enable persistence fallback |
 | `AppClosedError` | Using `EasierlitApp` after close | Stop loop and restart app/server lifecycle |
-| `TimeoutError` | `app.recv(timeout=...)` expires | Treat as idle tick and continue loop |
+| `TimeoutError` | `app.recv(timeout=...)`/`app.arecv(timeout=...)` expires | Treat as idle tick and continue loop |
 | `TypeError` | Process-mode pickling failure (`run_func` or payload) | Use picklable top-level functions and JSON-like payloads |
 | `RuntimeError` | Sync wait attempted from Chainlit event loop | Call client message methods from worker context |
 
@@ -1190,9 +1254,9 @@ Chainlit step categories:
 - Message steps: `user_message`, `assistant_message`, `system_message`
 - Tool/run family: `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.1.0 mapping:
+Easierlit v0.2.0 mapping:
 
-- `app.recv()` ingests user-message flow.
+- `app.recv()` and `app.arecv()` ingest user-message flow.
 - `app.send()` and `client.add_message()` emit assistant-message flow.
 - No dedicated public API for creating tool-call steps.
 
@@ -1206,6 +1270,6 @@ UI note: Chainlit `ui.cot` values are `full`, `tool_call`, `hidden`.
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
 | `EasierlitClient.list_threads`, `get_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitClient.add_message`, `update_message`, `delete_message` | `examples/thread_create_in_run_func.py` |
-| `EasierlitApp.recv`, `send` | `examples/minimal.py` |
+| `EasierlitApp.recv`, `arecv`, `send` | `examples/minimal.py`, `tests/test_app_queue.py` |
 | `EasierlitApp.update_message`, `delete_message` | `tests/test_app_queue.py` |
 | `set_worker_crash_handler`, `peek_worker_error` | `tests/test_client_worker.py`, `src/easierlit/server.py` |

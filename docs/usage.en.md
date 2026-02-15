@@ -1,6 +1,6 @@
-# Easierlit Usage Guide (v0.1.0)
+# Easierlit Usage Guide (v0.2.0)
 
-This document is the detailed usage reference for Easierlit v0.1.0.
+This document is the detailed usage reference for Easierlit v0.2.0.
 For exact method-level contracts (signature, raises, failure modes), see:
 
 - `docs/api-reference.en.md`
@@ -8,7 +8,7 @@ For exact method-level contracts (signature, raises, failure modes), see:
 
 ## 1. Scope and Version
 
-- Version target: `0.1.0`
+- Version target: `0.2.0`
 - Runtime core: Chainlit (`chainlit>=2.9,<3`)
 - This guide covers current public APIs only.
 
@@ -24,7 +24,7 @@ High-level flow:
 
 1. `server.serve()` binds runtime and starts Chainlit.
 2. Chainlit callback `on_message` converts input into `IncomingMessage`.
-3. Worker calls `app.recv()` and handles message.
+3. Worker calls `app.recv()` or `await app.arecv()` and handles message.
 4. Worker returns output via `app.send(...)` or client CRUD APIs.
 
 ## 3. Canonical Bootstrapping Pattern
@@ -58,6 +58,7 @@ Notes:
 
 - `serve()` is blocking.
 - `worker_mode` supports `"thread"` and `"process"`.
+- `run_func` can be sync or async. `run_func_mode="auto"` detects and runs both.
 - In process mode, `run_func` and payloads must be picklable.
 
 ## 4. Public API Signatures
@@ -74,9 +75,10 @@ EasierlitServer(
     persistence=None,
 )
 
-EasierlitClient(run_func, worker_mode="thread")
+EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
+EasierlitApp.arecv(timeout=None)
 EasierlitApp.send(thread_id, content, author="Assistant", metadata=None)
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.delete_message(thread_id, message_id)
@@ -135,10 +137,11 @@ Thread History visibility follows Chainlit policy:
 
 Recommended structure:
 
-1. Long-running loop with `app.recv(timeout=...)`.
-2. Handle `TimeoutError` as idle tick.
-3. Break on `AppClosedError`.
-4. Keep per-command exceptions contextual for logs.
+1. Sync `run_func`: long-running loop with `app.recv(timeout=...)`.
+2. Async `run_func`: long-running loop with `await app.arecv()` (or `await app.arecv(timeout=...)` when needed).
+3. Handle `TimeoutError` as idle tick when using timeout.
+4. Break on `AppClosedError`.
+5. Keep per-command exceptions contextual for logs.
 
 If `run_func` raises uncaught exception:
 
@@ -202,9 +205,10 @@ Tool/run family includes:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.1.0 mapping:
+Easierlit v0.2.0 mapping:
 
 - Incoming `app.recv()` data is user-message flow.
+- Incoming `app.arecv()` data follows the same user-message flow contract.
 - Outgoing `app.send()` and `client.add_message()` are assistant-message flow.
 - Easierlit does not provide a dedicated public API to create tool-call steps.
 
@@ -239,7 +243,7 @@ SQLite `tags` binding issues:
 - `examples/thread_crud.py`
 - `examples/thread_create_in_run_func.py`
 
-## 14. Release Checklist (v0.1.0)
+## 14. Release Checklist (v0.2.0)
 
 ```bash
 python3 -m py_compile examples/*.py
@@ -250,5 +254,5 @@ python3 -m twine check dist/*
 
 Also verify:
 
-- `pyproject.toml` version is `0.1.0`
+- `pyproject.toml` version is `0.2.0`
 - README/doc links resolve (`README.md`, `README.ko.md`, `docs/usage.en.md`, `docs/usage.ko.md`, `docs/api-reference.en.md`, `docs/api-reference.ko.md`)

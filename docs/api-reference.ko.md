@@ -1,6 +1,6 @@
-# Easierlit API 레퍼런스 (v0.1.0)
+# Easierlit API 레퍼런스 (v0.2.0)
 
-이 문서는 Easierlit v0.1.0의 메서드 단위 계약(contract)을 정의합니다.
+이 문서는 Easierlit v0.2.0의 메서드 단위 계약(contract)을 정의합니다.
 
 ## 1. 범위와 계약 표기 규칙
 
@@ -155,8 +155,9 @@ server.serve()  # blocking
 
 ```python
 EasierlitClient(
-    run_func: Callable[[EasierlitApp], None],
+    run_func: Callable[[EasierlitApp], Any],
     worker_mode: Literal["thread", "process"] = "thread",
+    run_func_mode: Literal["auto", "sync", "async"] = "auto",
 )
 ```
 
@@ -170,21 +171,27 @@ EasierlitClient(
 - Parameters
 - `run_func`: 워커가 실행할 함수.
 - `worker_mode`: `"thread"` 또는 `"process"`.
+- `run_func_mode`:
+  - `"auto"`: sync 함수는 즉시 실행, awaitable 반환은 자동 await.
+  - `"sync"`: `run_func`가 awaitable을 반환하면 오류.
+  - `"async"`: `run_func`가 awaitable을 반환해야 함.
 
 - Returns
 - `None` (생성자).
 
 - Raises
-- `worker_mode`가 허용값이 아니면 `ValueError`.
+- `worker_mode`/`run_func_mode` 값이 허용 범위를 벗어나면 `ValueError`.
 
 - Side effects
 - 워커/에러 상태와 runtime 핸들을 초기화합니다.
 
 - Concurrency/worker notes
 - `process` 모드는 `run(...)` 시점에 `run_func` 직렬화 가능 여부가 필요합니다.
+- `"auto"` 모드에서 async `run_func`는 thread/process 워커 모두 지원합니다.
 
 - Failure modes and fixes
 - worker_mode 오타: 정확히 `thread` 또는 `process` 사용.
+- run_func_mode 오타: `auto`, `sync`, `async` 중 하나 사용.
 
 - Examples
 
@@ -196,6 +203,14 @@ client = EasierlitClient(run_func=my_run_func, worker_mode="thread")
 # Edge/failure
 try:
     EasierlitClient(run_func=my_run_func, worker_mode="async")
+except ValueError:
+    ...
+```
+
+```python
+# Edge/failure
+try:
+    EasierlitClient(run_func=my_run_func, run_func_mode="invalid")
 except ValueError:
     ...
 ```
@@ -837,7 +852,56 @@ except Exception as exc:
     print(type(exc).__name__)  # TimeoutError or AppClosedError
 ```
 
-### 4.2 `EasierlitApp.send`
+### 4.2 `EasierlitApp.arecv`
+
+- Signature
+
+```python
+async def arecv(self, timeout: float | None = None) -> IncomingMessage
+```
+
+- Purpose
+- async `run_func`에서 사용하는 `recv()` 비동기 변형입니다.
+
+- When to call / When not to call
+- async worker loop에서 호출.
+- app이 닫힌 뒤에는 호출하지 않습니다.
+
+- Parameters
+- `timeout`: 대기 시간(초), `None`이면 무기한 대기.
+
+- Returns
+- `IncomingMessage`.
+
+- Raises
+- 타임아웃 시 `TimeoutError`.
+- 종료 상태/종료 sentinel 수신 시 `AppClosedError`.
+
+- Side effects
+- inbound 큐에서 항목 1개 소비.
+
+- Concurrency/worker notes
+- `asyncio.to_thread`로 blocking 큐 get을 async 루프에서 안전하게 호출합니다.
+
+- Failure modes and fixes
+- 빈번한 timeout: idle tick으로 간주하고 루프 지속.
+- closed app: 루프를 종료하도록 처리.
+
+- Examples
+
+```python
+incoming = await app.arecv()
+```
+
+```python
+# Edge/failure
+try:
+    await app.arecv(timeout=0.1)
+except Exception as exc:
+    print(type(exc).__name__)  # TimeoutError or AppClosedError
+```
+
+### 4.3 `EasierlitApp.send`
 
 - Signature
 
@@ -891,7 +955,7 @@ except TypeError:
     ...
 ```
 
-### 4.3 `EasierlitApp.update_message`
+### 4.4 `EasierlitApp.update_message`
 
 - Signature
 
@@ -945,7 +1009,7 @@ except AppClosedError:
     ...
 ```
 
-### 4.4 `EasierlitApp.delete_message`
+### 4.5 `EasierlitApp.delete_message`
 
 - Signature
 
@@ -993,7 +1057,7 @@ except AppClosedError:
     ...
 ```
 
-### 4.5 `EasierlitApp.close`
+### 4.6 `EasierlitApp.close`
 
 - Signature
 
@@ -1040,7 +1104,7 @@ app.close()
 app.close()
 ```
 
-### 4.6 `EasierlitApp.is_closed`
+### 4.7 `EasierlitApp.is_closed`
 
 - Signature
 
@@ -1141,7 +1205,7 @@ IncomingMessage(
 ```
 
 - Contract
-- Chainlit callback 파이프라인에서 생성되고 `app.recv()` 소비 대상으로 사용.
+- Chainlit callback 파이프라인에서 생성되고 `app.recv()`/`app.arecv()` 소비 대상으로 사용.
 
 ### 5.4 `OutgoingCommand`
 
@@ -1166,13 +1230,13 @@ OutgoingCommand(
 
 | Exception | 대표 트리거 | 1차 대응 |
 | --- | --- | --- |
-| `ValueError` | `worker_mode` 오류, 사용자 미존재, thread 미존재, auth 필드 오류 | 입력값/identifier/thread id 검증 |
+| `ValueError` | `worker_mode`/`run_func_mode` 오류, 사용자 미존재, thread 미존재, auth 필드 오류 | 입력값/identifier/thread id 검증 |
 | `WorkerAlreadyRunningError` | 워커 실행 중 `client.run()` 재호출 | 먼저 `client.stop()` 수행 |
 | `RunFuncExecutionError` | 워커 크래시가 `stop()`에서 전파 | `peek_worker_error()`/traceback 확인 후 `run_func` 수정 |
 | `DataPersistenceNotEnabledError` | data layer 없이 Thread CRUD 호출 | persistence 활성화 또는 외부 data layer 구성 |
 | `ThreadSessionNotActiveError` | active session/data layer 모두 없이 Message CRUD | 활성 session 사용 또는 persistence fallback 활성화 |
 | `AppClosedError` | close 이후 `EasierlitApp` 사용 | 루프 종료 후 라이프사이클 재시작 |
-| `TimeoutError` | `app.recv(timeout=...)` 시간 만료 | idle tick으로 처리하고 루프 지속 |
+| `TimeoutError` | `app.recv(timeout=...)`/`app.arecv(timeout=...)` 시간 만료 | idle tick으로 처리하고 루프 지속 |
 | `TypeError` | process 직렬화 실패(`run_func`/payload) | top-level 함수 + JSON 유사 payload 사용 |
 | `RuntimeError` | Chainlit 이벤트 루프에서 sync wait 시도 | worker 문맥에서 client message 메서드 호출 |
 
@@ -1183,9 +1247,9 @@ Chainlit step 분류:
 - message step: `user_message`, `assistant_message`, `system_message`
 - tool/run 계열: `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.1.0 매핑:
+Easierlit v0.2.0 매핑:
 
-- `app.recv()`는 user-message 흐름을 소비.
+- `app.recv()`와 `app.arecv()`는 user-message 흐름을 소비.
 - `app.send()` / `client.add_message()`는 assistant-message 흐름을 생성.
 - tool-call step 전용 공개 API는 제공하지 않음.
 
@@ -1199,6 +1263,6 @@ UI 참고: Chainlit `ui.cot`는 `full`, `tool_call`, `hidden` 지원.
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
 | `EasierlitClient.list_threads`, `get_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitClient.add_message`, `update_message`, `delete_message` | `examples/thread_create_in_run_func.py` |
-| `EasierlitApp.recv`, `send` | `examples/minimal.py` |
+| `EasierlitApp.recv`, `arecv`, `send` | `examples/minimal.py`, `tests/test_app_queue.py` |
 | `EasierlitApp.update_message`, `delete_message` | `tests/test_app_queue.py` |
 | `set_worker_crash_handler`, `peek_worker_error` | `tests/test_client_worker.py`, `src/easierlit/server.py` |

@@ -1,6 +1,6 @@
-# Easierlit 사용 가이드 (v0.1.0)
+# Easierlit 사용 가이드 (v0.2.0)
 
-이 문서는 Easierlit v0.1.0의 상세 사용 레퍼런스입니다.
+이 문서는 Easierlit v0.2.0의 상세 사용 레퍼런스입니다.
 메서드 단위의 정확한 계약(시그니처/예외/실패모드)은 아래 API 레퍼런스를 우선 참고하세요.
 
 - `docs/api-reference.en.md`
@@ -8,7 +8,7 @@
 
 ## 1. 범위와 버전
 
-- 대상 버전: `0.1.0`
+- 대상 버전: `0.2.0`
 - 런타임 코어: Chainlit (`chainlit>=2.9,<3`)
 - 현재 공개 API 기준만 다룹니다.
 
@@ -24,7 +24,7 @@ Easierlit은 3개 구성 요소로 동작합니다.
 
 1. `server.serve()`가 runtime bind 후 Chainlit 실행
 2. Chainlit `on_message`가 입력을 `IncomingMessage`로 변환
-3. 워커가 `app.recv()`로 입력을 소비
+3. 워커가 `app.recv()` 또는 `await app.arecv()`로 입력을 소비
 4. 워커가 `app.send(...)` 또는 client CRUD API로 출력/저장
 
 ## 3. 표준 부트스트랩 패턴
@@ -58,6 +58,7 @@ server.serve()
 
 - `serve()`는 블로킹입니다.
 - `worker_mode`는 `"thread"`, `"process"`를 지원합니다.
+- `run_func`는 sync/async 모두 지원하며 기본값 `run_func_mode="auto"`가 자동 판별합니다.
 - process 모드에서는 `run_func`와 payload가 picklable이어야 합니다.
 
 ## 4. 공개 API 시그니처
@@ -74,9 +75,10 @@ EasierlitServer(
     persistence=None,
 )
 
-EasierlitClient(run_func, worker_mode="thread")
+EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
+EasierlitApp.arecv(timeout=None)
 EasierlitApp.send(thread_id, content, author="Assistant", metadata=None)
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.delete_message(thread_id, message_id)
@@ -135,10 +137,11 @@ Thread History 표시 조건(Chainlit 정책):
 
 권장 구조:
 
-1. `app.recv(timeout=...)` 기반의 long-running loop
-2. `TimeoutError`는 idle tick으로 처리
-3. `AppClosedError`에서 루프 종료
-4. 명령 단위 예외는 문맥을 붙여 로그 가독성 확보
+1. sync `run_func`: `app.recv(timeout=...)` 기반 long-running loop
+2. async `run_func`: `await app.arecv()` 기반 loop (필요 시 `await app.arecv(timeout=...)`)
+3. timeout 사용 시 `TimeoutError`는 idle tick으로 처리
+4. `AppClosedError`에서 루프 종료
+5. 명령 단위 예외는 문맥을 붙여 로그 가독성 확보
 
 `run_func`에서 처리되지 않은 예외가 발생하면:
 
@@ -202,9 +205,10 @@ Chainlit은 step type으로 메시지와 도구/실행을 구분합니다.
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.1.0 매핑:
+Easierlit v0.2.0 매핑:
 
 - `app.recv()` 입력은 사용자 메시지 흐름
+- `app.arecv()` 입력도 동일한 사용자 메시지 흐름 계약을 따름
 - `app.send()` / `client.add_message()` 출력은 assistant 메시지 흐름
 - Easierlit 공개 API에는 전용 tool-call step 생성 API가 없습니다
 
@@ -239,7 +243,7 @@ SQLite `tags` 바인딩 이슈:
 - `examples/thread_crud.py`
 - `examples/thread_create_in_run_func.py`
 
-## 14. 릴리스 체크리스트 (v0.1.0)
+## 14. 릴리스 체크리스트 (v0.2.0)
 
 ```bash
 python3 -m py_compile examples/*.py
@@ -250,5 +254,5 @@ python3 -m twine check dist/*
 
 추가 확인:
 
-- `pyproject.toml` version이 `0.1.0`
+- `pyproject.toml` version이 `0.2.0`
 - 문서 링크 정상(`README.md`, `README.ko.md`, `docs/usage.en.md`, `docs/usage.ko.md`, `docs/api-reference.en.md`, `docs/api-reference.ko.md`)

@@ -2,7 +2,7 @@
 
 # Easierlit
 
-[![Version](https://img.shields.io/badge/version-0.1.0-2563eb)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.2.0-2563eb)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-0ea5e9)](pyproject.toml)
 [![Chainlit](https://img.shields.io/badge/chainlit-2.9%20to%203-10b981)](https://docs.chainlit.io)
 
@@ -86,7 +86,36 @@ server = EasierlitServer(client=client)
 server.serve()  # blocking
 ```
 
-## Public API (v0.1.0)
+Async worker pattern:
+
+```python
+from easierlit import AppClosedError, EasierlitClient, EasierlitServer
+
+
+async def run_func(app):
+    while True:
+        try:
+            incoming = await app.arecv()
+        except AppClosedError:
+            break
+
+        app.send(
+            thread_id=incoming.thread_id,
+            content=f"Echo: {incoming.content}",
+            author="EchoBot",
+        )
+
+
+client = EasierlitClient(
+    run_func=run_func,
+    worker_mode="thread",
+    run_func_mode="auto",  # auto/sync/async
+)
+server = EasierlitServer(client=client)
+server.serve()
+```
+
+## Public API (v0.2.0)
 
 ```python
 EasierlitServer(
@@ -98,9 +127,10 @@ EasierlitServer(
     persistence=None,
 )
 
-EasierlitClient(run_func, worker_mode="thread")
+EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
+EasierlitApp.arecv(timeout=None)
 EasierlitApp.send(thread_id, content, author="Assistant", metadata=None)
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.delete_message(thread_id, message_id)
@@ -180,7 +210,7 @@ Tool/run family includes:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.1.0 currently provides message-centric public APIs.
+Easierlit v0.2.0 currently provides message-centric public APIs.
 A dedicated tool-call step creation public API is not provided yet.
 
 ## Example Map
@@ -199,5 +229,5 @@ A dedicated tool-call step creation public API is not provided yet.
 
 ## Migration Note
 
-Removed APIs from earlier drafts are not part of v0.1.0 public usage.
+Removed APIs from earlier drafts are not part of v0.2.0 public usage.
 Use the APIs documented in this README and API Reference.

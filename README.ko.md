@@ -2,7 +2,7 @@
 
 # Easierlit
 
-[![Version](https://img.shields.io/badge/version-0.1.0-2563eb)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.2.0-2563eb)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-0ea5e9)](pyproject.toml)
 [![Chainlit](https://img.shields.io/badge/chainlit-2.9%20to%203-10b981)](https://docs.chainlit.io)
 
@@ -86,7 +86,36 @@ server = EasierlitServer(client=client)
 server.serve()  # blocking
 ```
 
-## 공개 API (v0.1.0)
+비동기 워커 패턴:
+
+```python
+from easierlit import AppClosedError, EasierlitClient, EasierlitServer
+
+
+async def run_func(app):
+    while True:
+        try:
+            incoming = await app.arecv()
+        except AppClosedError:
+            break
+
+        app.send(
+            thread_id=incoming.thread_id,
+            content=f"Echo: {incoming.content}",
+            author="EchoBot",
+        )
+
+
+client = EasierlitClient(
+    run_func=run_func,
+    worker_mode="thread",
+    run_func_mode="auto",  # auto/sync/async
+)
+server = EasierlitServer(client=client)
+server.serve()
+```
+
+## 공개 API (v0.2.0)
 
 ```python
 EasierlitServer(
@@ -98,9 +127,10 @@ EasierlitServer(
     persistence=None,
 )
 
-EasierlitClient(run_func, worker_mode="thread")
+EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
+EasierlitApp.arecv(timeout=None)
 EasierlitApp.send(thread_id, content, author="Assistant", metadata=None)
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.delete_message(thread_id, message_id)
@@ -180,7 +210,7 @@ Tool/run 계열:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.1.0 공개 API는 메시지 중심이며,
+Easierlit v0.2.0 공개 API는 메시지 중심이며,
 전용 tool-call step 생성 API는 아직 제공하지 않습니다.
 
 ## 예제 맵
@@ -199,5 +229,5 @@ Easierlit v0.1.0 공개 API는 메시지 중심이며,
 
 ## 마이그레이션 노트
 
-과거 초안에서 제거된 API는 v0.1.0 공개 사용 범위에 포함되지 않습니다.
+과거 초안에서 제거된 API는 v0.2.0 공개 사용 범위에 포함되지 않습니다.
 README 및 API 레퍼런스에 명시된 API만 사용하세요.
