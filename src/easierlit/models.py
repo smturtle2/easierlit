@@ -1,0 +1,24 @@
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+
+class IncomingMessage(BaseModel):
+    thread_id: str
+    session_id: str
+    message_id: str
+    content: str
+    author: str
+    created_at: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OutgoingCommand(BaseModel):
+    command: Literal["send", "update", "delete", "close"]
+    thread_id: str | None = None
+    message_id: str | None = None
+    content: str | None = None
+    author: str = "Assistant"
+    metadata: dict[str, Any] = Field(default_factory=dict)

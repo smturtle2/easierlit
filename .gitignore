@@ -1,0 +1,43 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test and type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.pyre/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Coverage and test reports
+.coverage
+.coverage.*
+htmlcov/
+
+# IDE / OS files
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+*.log
+
+# Chainlit runtime artifacts (keep project config only)
+.chainlit/*
+!.chainlit/config.toml
+
+# Local scratch
+.files/

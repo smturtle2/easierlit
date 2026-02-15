@@ -1,0 +1,215 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import secrets
+import sys
+from pathlib import Path
+
+import chainlit as cl
+from chainlit.auth import require_login
+from chainlit.config import config
+from chainlit.data import get_data_layer
+from chainlit.user import User
+
+# When this module is loaded by Chainlit's load_module(file_path), ensure the
+# src root is importable so absolute imports keep working.
+_THIS_FILE = Path(__file__).resolve()
+_SRC_ROOT = _THIS_FILE.parents[1]
+if str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
+
+from easierlit.errors import AppClosedError, RunFuncExecutionError
+from easierlit.models import IncomingMessage
+from easierlit.runtime import get_runtime
+from easierlit.settings import EasierlitPersistenceConfig
+from easierlit.sqlite_bootstrap import ensure_sqlite_schema
+
+LOGGER = logging.getLogger(__name__)
+RUNTIME = get_runtime()
+_CONFIG_APPLIED = False
+_APP_CLOSED_WARNING_EMITTED = False
+_WORKER_FAILURE_UI_NOTIFIED = False
+
+
+def _summarize_worker_error(traceback_text: str) -> str:
+    lines = [line.strip() for line in traceback_text.strip().splitlines() if line.strip()]
+    if lines:
+        return lines[-1]
+    return "Unknown run_func error"
+
+
+def _apply_runtime_configuration() -> None:
+    global _CONFIG_APPLIED
+    if _CONFIG_APPLIED:
+        return
+
+    _apply_auth_configuration()
+    _register_default_data_layer_if_needed()
+
+    # Easierlit policy.
+    config.ui.default_sidebar_state = "open"
+    _CONFIG_APPLIED = True
+
+
+def _apply_auth_configuration() -> None:
+    auth = RUNTIME.get_auth()
+    if auth is None:
+        return
+
+    expected_username = auth.username
+    expected_password = auth.password
+    resolved_identifier = auth.identifier or auth.username
+    resolved_metadata = auth.metadata or {}
+
+    async def _password_auth_callback(username: str, password: str) -> User | None:
+        if not secrets.compare_digest(username, expected_username):
+            return None
+        if not secrets.compare_digest(password, expected_password):
+            return None
+        return User(identifier=resolved_identifier, metadata=dict(resolved_metadata))
+
+    cl.password_auth_callback(_password_auth_callback)
+
+
+def _should_register_default_data_layer() -> bool:
+    persistence = RUNTIME.get_persistence() or EasierlitPersistenceConfig()
+    if not persistence.enabled:
+        return False
+    if config.code.data_layer is not None:
+        return False
+    if os.getenv("DATABASE_URL"):
+        return False
+    if os.getenv("LITERAL_API_KEY"):
+        return False
+    return True
+
+
+def _register_default_data_layer_if_needed() -> None:
+    if not _should_register_default_data_layer():
+        return
+
+    persistence = RUNTIME.get_persistence() or EasierlitPersistenceConfig()
+    db_path = ensure_sqlite_schema(persistence.sqlite_path).resolve()
+    conninfo = f"sqlite+aiosqlite:///{db_path}"
+
+    @cl.data_layer
+    def _easierlit_default_data_layer():
+        from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
+
+        return SQLAlchemyDataLayer(conninfo=conninfo)
+
+    LOGGER.info("Easierlit default SQLite data layer enabled at %s", db_path)
+
+
+@cl.on_app_startup
+async def _on_app_startup() -> None:
+    global _APP_CLOSED_WARNING_EMITTED, _WORKER_FAILURE_UI_NOTIFIED
+    _apply_runtime_configuration()
+    _APP_CLOSED_WARNING_EMITTED = False
+    _WORKER_FAILURE_UI_NOTIFIED = False
+    RUNTIME.set_main_loop(asyncio.get_running_loop())
+    await RUNTIME.start_dispatcher()
+
+    try:
+        data_layer = get_data_layer()
+    except Exception:
+        LOGGER.exception("Failed to initialize Chainlit data layer at startup.")
+        data_layer = None
+
+    if not require_login():
+        LOGGER.warning(
+            "Thread History sidebar is hidden by Chainlit policy because "
+            "requireLogin=False. Configure Easierlit auth to enable it."
+        )
+    if data_layer is None:
+        LOGGER.warning(
+            "Thread History sidebar may be hidden because dataPersistence=False. "
+            "Configure a data layer (or keep Easierlit default persistence enabled)."
+        )
+
+
+@cl.on_app_shutdown
+async def _on_app_shutdown() -> None:
+    global _APP_CLOSED_WARNING_EMITTED, _CONFIG_APPLIED, _WORKER_FAILURE_UI_NOTIFIED
+    await RUNTIME.stop_dispatcher()
+
+    client = RUNTIME.get_client()
+    if client is None:
+        return
+
+    try:
+        client.stop()
+    except RunFuncExecutionError as exc:
+        worker_error = client.peek_worker_error()
+        summary = _summarize_worker_error(worker_error or str(exc))
+        LOGGER.warning("run_func crash acknowledged during shutdown: %s", summary)
+    finally:
+        _CONFIG_APPLIED = False
+        _APP_CLOSED_WARNING_EMITTED = False
+        _WORKER_FAILURE_UI_NOTIFIED = False
+
+
+@cl.on_chat_start
+async def _on_chat_start() -> None:
+    session = cl.context.session
+    RUNTIME.register_session(thread_id=session.thread_id, session_id=session.id)
+
+
+@cl.on_chat_resume
+async def _on_chat_resume(_thread: dict) -> None:
+    session = cl.context.session
+    RUNTIME.register_session(thread_id=session.thread_id, session_id=session.id)
+
+
+@cl.on_chat_end
+async def _on_chat_end() -> None:
+    session = cl.context.session
+    RUNTIME.unregister_session(session.id)
+
+
+@cl.on_message
+async def _on_message(message: cl.Message) -> None:
+    global _APP_CLOSED_WARNING_EMITTED, _WORKER_FAILURE_UI_NOTIFIED
+
+    session = cl.context.session
+    RUNTIME.register_session(thread_id=session.thread_id, session_id=session.id)
+
+    incoming = IncomingMessage(
+        thread_id=session.thread_id,
+        session_id=session.id,
+        message_id=message.id,
+        content=message.content or "",
+        author=message.author,
+        created_at=message.created_at,
+        metadata=message.metadata or {},
+    )
+    try:
+        RUNTIME.enqueue_incoming(incoming)
+    except AppClosedError:
+        client = RUNTIME.get_client()
+        worker_error = client.peek_worker_error() if client is not None else None
+        if worker_error is None:
+            raise
+
+        summary = _summarize_worker_error(worker_error)
+        if not _APP_CLOSED_WARNING_EMITTED:
+            LOGGER.warning(
+                "Worker app already closed after run_func crash; server shutdown in progress: %s",
+                summary,
+            )
+            _APP_CLOSED_WARNING_EMITTED = True
+
+        if not _WORKER_FAILURE_UI_NOTIFIED:
+            try:
+                await cl.Message(
+                    content=(
+                        "Internal worker error detected. Server is shutting down.\n"
+                        f"Reason: {summary}"
+                    ),
+                    author="Easierlit",
+                ).send()
+                _WORKER_FAILURE_UI_NOTIFIED = True
+            except Exception:
+                LOGGER.exception("Failed to send worker crash summary message.")
