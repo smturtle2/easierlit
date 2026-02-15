@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import multiprocessing as mp
 import pickle
 import queue
@@ -39,6 +40,9 @@ class EasierlitApp:
             raise AppClosedError("EasierlitApp is closed.")
 
         return item
+
+    async def arecv(self, timeout: float | None = None) -> IncomingMessage:
+        return await asyncio.to_thread(self.recv, timeout)
 
     def send(
         self,

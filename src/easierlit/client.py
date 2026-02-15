@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import multiprocessing as mp
 import pickle
@@ -23,13 +25,73 @@ from .models import OutgoingCommand
 from .runtime import get_runtime
 
 
-def _process_worker_entry(
-    run_func: Callable[[EasierlitApp], None],
+RunFuncMode = Literal["auto", "sync", "async"]
+
+
+def _close_unawaited_awaitable(value: Any) -> None:
+    close = getattr(value, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            pass
+
+    cancel = getattr(value, "cancel", None)
+    if callable(cancel):
+        try:
+            cancel()
+        except Exception:
+            pass
+
+
+def _run_awaitable(awaitable: Any) -> None:
+    if inspect.iscoroutine(awaitable):
+        asyncio.run(awaitable)
+        return
+
+    async def _await_result() -> None:
+        await awaitable
+
+    asyncio.run(_await_result())
+
+
+def _execute_run_func(
+    run_func: Callable[[EasierlitApp], Any],
     app: EasierlitApp,
+    run_func_mode: RunFuncMode,
+) -> None:
+    result = run_func(app)
+    is_awaitable = inspect.isawaitable(result)
+
+    if run_func_mode == "sync":
+        if is_awaitable:
+            _close_unawaited_awaitable(result)
+            raise TypeError(
+                "run_func_mode='sync' requires a synchronous run_func "
+                "that does not return an awaitable."
+            )
+        return
+
+    if run_func_mode == "async":
+        if not is_awaitable:
+            raise TypeError(
+                "run_func_mode='async' requires run_func to return an awaitable."
+            )
+        _run_awaitable(result)
+        return
+
+    if is_awaitable:
+        _run_awaitable(result)
+
+
+def _process_worker_entry(
+    run_func: Callable[[EasierlitApp], Any],
+    app: EasierlitApp,
+    run_func_mode: RunFuncMode,
     error_queue: Any,
 ) -> None:
     try:
-        run_func(app)
+        _execute_run_func(run_func, app, run_func_mode)
     except Exception:
         error_queue.put(traceback.format_exc())
     finally:
@@ -39,14 +101,18 @@ def _process_worker_entry(
 class EasierlitClient:
     def __init__(
         self,
-        run_func: Callable[[EasierlitApp], None],
+        run_func: Callable[[EasierlitApp], Any],
         worker_mode: Literal["thread", "process"] = "thread",
+        run_func_mode: RunFuncMode = "auto",
     ):
         if worker_mode not in ("thread", "process"):
             raise ValueError("worker_mode must be either 'thread' or 'process'.")
+        if run_func_mode not in ("auto", "sync", "async"):
+            raise ValueError("run_func_mode must be one of 'auto', 'sync', or 'async'.")
 
         self.run_func = run_func
         self.worker_mode = worker_mode
+        self.run_func_mode = run_func_mode
 
         self._runtime = get_runtime()
         self._app: EasierlitApp | None = None
@@ -220,7 +286,7 @@ class EasierlitClient:
 
     def _thread_worker_entry(self, app: EasierlitApp) -> None:
         try:
-            self.run_func(app)
+            _execute_run_func(self.run_func, app, self.run_func_mode)
         except Exception:
             traceback_text = traceback.format_exc()
             self._thread_error_queue.put(traceback_text)
@@ -240,7 +306,12 @@ class EasierlitClient:
         self._process_error_queue = context.Queue()
         self._process = context.Process(
             target=_process_worker_entry,
-            args=(self.run_func, app, self._process_error_queue),
+            args=(
+                self.run_func,
+                app,
+                self.run_func_mode,
+                self._process_error_queue,
+            ),
             daemon=True,
         )
         self._process.start()

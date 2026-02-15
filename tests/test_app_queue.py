@@ -1,3 +1,7 @@
+import asyncio
+
+import pytest
+
 from easierlit import AppClosedError, EasierlitApp, IncomingMessage
 
 
@@ -51,3 +55,31 @@ def test_recv_timeout_and_close():
         assert False, "recv() should fail once app is closed."
     except AppClosedError:
         pass
+
+
+def test_arecv_flow():
+    app = EasierlitApp()
+    incoming = IncomingMessage(
+        thread_id="thread-2",
+        session_id="session-2",
+        message_id="msg-2",
+        content="hello async",
+        author="User",
+    )
+    app._enqueue_incoming(incoming)
+
+    received = asyncio.run(app.arecv(timeout=1.0))
+    assert received.thread_id == "thread-2"
+    assert received.content == "hello async"
+
+
+def test_arecv_timeout_and_close():
+    app = EasierlitApp()
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(app.arecv(timeout=0.05))
+
+    app.close()
+
+    with pytest.raises(AppClosedError):
+        asyncio.run(app.arecv(timeout=0.05))
