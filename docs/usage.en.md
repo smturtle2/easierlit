@@ -1,6 +1,6 @@
-# Easierlit Usage Guide (v0.3.0)
+# Easierlit Usage Guide (v0.3.1)
 
-This document is the detailed usage reference for Easierlit v0.3.0.
+This document is the detailed usage reference for Easierlit v0.3.1.
 For exact method-level contracts (signature, raises, failure modes), see:
 
 - `docs/api-reference.en.md`
@@ -8,7 +8,7 @@ For exact method-level contracts (signature, raises, failure modes), see:
 
 ## 1. Scope and Version
 
-- Version target: `0.3.0`
+- Version target: `0.3.1`
 - Runtime core: Chainlit (`chainlit>=2.9,<3`)
 - This guide covers current public APIs only.
 
@@ -78,13 +78,13 @@ EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
-EasierlitApp.send(thread_id, content, author="Assistant", metadata=None)
-EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None)
+EasierlitApp.send(thread_id, content, author="Assistant", metadata=None) -> str
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str  # deprecated alias
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
-EasierlitApp.new_thread(thread_id, name=None, metadata=None, tags=None)
+EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
 EasierlitApp.close()
@@ -160,14 +160,14 @@ Available methods on `EasierlitApp`:
 
 - `list_threads(first=20, cursor=None, search=None, user_identifier=None)`
 - `get_thread(thread_id)`
-- `new_thread(thread_id, name=None, metadata=None, tags=None)`
+- `new_thread(name=None, metadata=None, tags=None) -> str`
 - `update_thread(thread_id, name=None, metadata=None, tags=None)`
 - `delete_thread(thread_id)`
 
 Behavior details:
 
 - Data layer is required for thread CRUD.
-- `new_thread` creates only when target thread id is missing.
+- `new_thread` auto-generates a unique thread id and returns it.
 - `update_thread` updates only when target thread already exists.
 - If auth is configured, `new_thread` and `update_thread` auto-resolve owner user and save with `user_id`.
 - In SQLite SQLAlchemyDataLayer, `tags` list is JSON-serialized on write and normalized to list on read.
@@ -176,7 +176,7 @@ Behavior details:
 
 Message methods:
 
-- `app.send(...)`, `app.add_message(...)`, `app.update_message(...)`, `app.delete_message(...)`
+- `app.send(...)`, `app.add_message(...)` (deprecated alias), `app.update_message(...)`, `app.delete_message(...)`
 
 Execution model:
 
@@ -191,9 +191,9 @@ Reference example: `examples/thread_create_in_run_func.py`
 
 Pattern:
 
-1. Generate new `thread_id` (for example with `uuid4`).
-2. Call `app.new_thread(...)` to create initial thread metadata.
-3. Call `app.add_message(...)` to add bootstrap assistant message.
+1. Call `thread_id = app.new_thread(...)`.
+2. Use the returned `thread_id` for follow-up messages.
+3. Call `app.send(...)` to add bootstrap assistant message.
 4. Reply to the current thread with created ID.
 
 With auth enabled, created thread ownership is auto-assigned to the configured user.
@@ -212,11 +212,11 @@ Tool/run family includes:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.3.0 mapping:
+Easierlit v0.3.1 mapping:
 
 - Incoming `app.recv()` data is user-message flow.
 - Incoming `app.arecv()` data follows the same user-message flow contract.
-- Outgoing `app.send()` and `app.add_message()` are assistant-message flow.
+- Outgoing `app.send()` is assistant-message flow (`app.add_message()` is a deprecated alias).
 - Easierlit does not provide a dedicated public API to create tool-call steps.
 
 UI option reference (Chainlit): `ui.cot` supports `full`, `tool_call`, `hidden`.
@@ -250,7 +250,7 @@ SQLite `tags` binding issues:
 - `examples/thread_crud.py`
 - `examples/thread_create_in_run_func.py`
 
-## 14. Release Checklist (v0.3.0)
+## 14. Release Checklist (v0.3.1)
 
 ```bash
 python3 -m py_compile examples/*.py
@@ -261,5 +261,5 @@ python3 -m twine check dist/*
 
 Also verify:
 
-- `pyproject.toml` version is `0.3.0`
+- `pyproject.toml` version is `0.3.1`
 - README/doc links resolve (`README.md`, `README.ko.md`, `docs/usage.en.md`, `docs/usage.ko.md`, `docs/api-reference.en.md`, `docs/api-reference.ko.md`)

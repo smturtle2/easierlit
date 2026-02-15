@@ -1,8 +1,8 @@
-# Easierlit API 레퍼런스 (v0.3.0)
+# Easierlit API 레퍼런스 (v0.3.1)
 
 ## 1. 범위와 계약 표기
 
-- 대상 버전: `0.3.0`
+- 대상 버전: `0.3.1`
 - 런타임 코어: Chainlit (`chainlit>=2.9,<3`)
 - 본 문서는 현재 공개 API만 다룹니다.
 - `EasierlitClient`는 thread 워커만 지원합니다(`worker_mode="thread"`).
@@ -159,7 +159,7 @@ send(
 - 생성된 `message_id` 반환
 - 실제 반영은 runtime dispatcher에서 수행
 
-### 4.4 `EasierlitApp.add_message`
+### 4.4 `EasierlitApp.add_message` (deprecated alias)
 
 ```python
 add_message(
@@ -170,7 +170,7 @@ add_message(
 ) -> str
 ```
 
-- `send`와 동일한 큐 기반 동작(별칭)
+- `send`와 동일한 큐 기반 동작(Deprecated 별칭)
 
 ### 4.5 `EasierlitApp.update_message`
 
@@ -236,22 +236,23 @@ get_thread(thread_id: str) -> dict
 
 ```python
 new_thread(
-    thread_id: str,
     name: str | None = None,
     metadata: dict | None = None,
     tags: list[str] | None = None,
-) -> None
+) -> str
 ```
 
 동작:
 
-- 대상 thread id가 없을 때만 생성
+- UUID4로 `thread_id`를 내부 생성
+- 생성된 id가 이미 존재하면 최대 16회 재시도
+- 생성된 `thread_id`를 반환
 - auth 설정 시 owner user를 자동 조회/생성해 `user_id`로 저장
 - SQLite SQLAlchemyDataLayer에서는 `tags`를 JSON 문자열로 저장
 
 예외:
 
-- thread가 이미 있으면 `ValueError`
+- 16회 재시도 후에도 고유 id를 확보하지 못하면 `RuntimeError`
 
 ### 4.10 `EasierlitApp.update_thread`
 
@@ -362,12 +363,13 @@ OutgoingCommand(
 | `RunFuncExecutionError` | `run_func` 미처리 예외 | traceback 확인 후 run_func 로직 수정 |
 | `DataPersistenceNotEnabledError` | data layer 없는 상태에서 thread CRUD 호출 | persistence/data layer 설정 |
 | `ThreadSessionNotActiveError` | session/data layer 모두 없는 상태에서 메시지 command 적용 | 활성 session 유지 또는 persistence 설정 |
+| `RuntimeError` | `new_thread()`가 재시도 후에도 고유 id 할당 실패 | id 생성/충돌 상황 점검 후 재시도 |
 | `ValueError` | 잘못된 worker mode/run_func mode, user/thread 미존재 | 입력/식별자 검증 |
 
 ## 7. Chainlit Message vs Tool-call 매핑
 
 - `app.recv/arecv` 입력은 user-message 흐름
-- `app.send/add_message` 출력은 assistant-message 흐름
+- `app.send` 출력은 assistant-message 흐름(`add_message`는 deprecated alias)
 - Easierlit 공개 API는 전용 tool-call step 생성 API를 제공하지 않음
 
 ## 8. Method-to-Example 인덱스
@@ -376,5 +378,5 @@ OutgoingCommand(
 |---|---|
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
 | `EasierlitApp.list_threads`, `get_thread`, `new_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
-| `EasierlitApp.send`, `add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
+| `EasierlitApp.send`, `add_message`(deprecated alias), `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | 인증/영속성 설정 | `examples/custom_auth.py` |

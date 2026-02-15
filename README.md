@@ -2,7 +2,7 @@
 
 # Easierlit
 
-[![Version](https://img.shields.io/badge/version-0.3.0-2563eb)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.3.1-2563eb)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-0ea5e9)](pyproject.toml)
 [![Chainlit](https://img.shields.io/badge/chainlit-2.9%20to%203-10b981)](https://docs.chainlit.io)
 
@@ -114,7 +114,7 @@ server = EasierlitServer(client=client)
 server.serve()
 ```
 
-## Public API (v0.3.0)
+## Public API (v0.3.1)
 
 ```python
 EasierlitServer(
@@ -130,13 +130,13 @@ EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
-EasierlitApp.send(thread_id, content, author="Assistant", metadata=None)
-EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None)
+EasierlitApp.send(thread_id, content, author="Assistant", metadata=None) -> str
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str  # deprecated alias
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
-EasierlitApp.new_thread(thread_id, name=None, metadata=None, tags=None)
+EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
 EasierlitApp.close()
@@ -174,7 +174,7 @@ Typical Easierlit setup:
 Message APIs:
 
 - `app.send(...)`
-- `app.add_message(...)`
+- `app.add_message(...)` (deprecated alias of `send(...)`)
 - `app.update_message(...)`
 - `app.delete_message(...)`
 
@@ -188,7 +188,8 @@ Thread APIs:
 
 Behavior highlights:
 
-- `app.new_thread(...)` creates only when thread does not exist.
+- `app.send(...)` returns generated `message_id`.
+- `app.new_thread(...)` auto-generates a unique `thread_id` and returns it.
 - `app.update_thread(...)` updates only when thread already exists.
 - With auth enabled, both `app.new_thread(...)` and `app.update_thread(...)` auto-assign thread ownership.
 - SQLite SQLAlchemyDataLayer path auto normalizes thread `tags`.
@@ -216,7 +217,7 @@ Tool/run family includes:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.3.0 currently provides message-centric public APIs.
+Easierlit v0.3.1 currently provides message-centric public APIs.
 A dedicated tool-call step creation public API is not provided yet.
 
 ## Example Map
@@ -235,5 +236,8 @@ A dedicated tool-call step creation public API is not provided yet.
 
 ## Migration Note
 
-Removed APIs from earlier drafts are not part of v0.3.0 public usage.
-Use the APIs documented in this README and API Reference.
+v0.3.1 API updates:
+
+- `new_thread(thread_id=..., ...)` -> `thread_id = new_thread(...)`
+- `send(...)` is the canonical message API and returns `message_id`.
+- `add_message(...)` remains supported as a deprecated alias of `send(...)` (no runtime warning).

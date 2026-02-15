@@ -1,6 +1,6 @@
-# Easierlit 사용 가이드 (v0.3.0)
+# Easierlit 사용 가이드 (v0.3.1)
 
-이 문서는 Easierlit v0.3.0의 상세 사용 레퍼런스입니다.
+이 문서는 Easierlit v0.3.1의 상세 사용 레퍼런스입니다.
 메서드 단위의 정확한 계약(시그니처/예외/실패모드)은 아래 API 레퍼런스를 우선 참고하세요.
 
 - `docs/api-reference.en.md`
@@ -8,7 +8,7 @@
 
 ## 1. 범위와 버전
 
-- 대상 버전: `0.3.0`
+- 대상 버전: `0.3.1`
 - 런타임 코어: Chainlit (`chainlit>=2.9,<3`)
 - 현재 공개 API 기준만 다룹니다.
 
@@ -78,13 +78,13 @@ EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
-EasierlitApp.send(thread_id, content, author="Assistant", metadata=None)
-EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None)
+EasierlitApp.send(thread_id, content, author="Assistant", metadata=None) -> str
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str  # deprecated alias
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
-EasierlitApp.new_thread(thread_id, name=None, metadata=None, tags=None)
+EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
 EasierlitApp.close()
@@ -160,14 +160,14 @@ Thread History 표시 조건(Chainlit 정책):
 
 - `list_threads(first=20, cursor=None, search=None, user_identifier=None)`
 - `get_thread(thread_id)`
-- `new_thread(thread_id, name=None, metadata=None, tags=None)`
+- `new_thread(name=None, metadata=None, tags=None) -> str`
 - `update_thread(thread_id, name=None, metadata=None, tags=None)`
 - `delete_thread(thread_id)`
 
 동작 상세:
 
 - Thread CRUD는 data layer가 필요합니다.
-- `new_thread`는 대상 thread id가 없을 때만 생성합니다.
+- `new_thread`는 고유한 thread id를 자동 생성하고 반환합니다.
 - `update_thread`는 대상 thread가 이미 있을 때만 수정합니다.
 - auth 설정 시 `new_thread`/`update_thread` 모두 소유자 user를 자동 조회/생성 후 `user_id`로 저장합니다.
 - SQLite SQLAlchemyDataLayer에서는 `tags` list를 저장 시 JSON 직렬화하고 조회 시 list로 정규화합니다.
@@ -176,7 +176,7 @@ Thread History 표시 조건(Chainlit 정책):
 
 메시지 메서드:
 
-- `app.send(...)`, `app.add_message(...)`, `app.update_message(...)`, `app.delete_message(...)`
+- `app.send(...)`, `app.add_message(...)`(deprecated alias), `app.update_message(...)`, `app.delete_message(...)`
 
 실행 모델:
 
@@ -191,9 +191,9 @@ Thread History 표시 조건(Chainlit 정책):
 
 패턴:
 
-1. 새 `thread_id` 생성(예: `uuid4`)
-2. `app.new_thread(...)`로 초기 메타데이터 생성
-3. `app.add_message(...)`로 bootstrap assistant message 저장
+1. `thread_id = app.new_thread(...)` 호출
+2. 반환된 `thread_id`로 후속 메시지 대상 지정
+3. `app.send(...)`로 bootstrap assistant message 저장
 4. 현재 thread로 생성 결과를 안내
 
 auth 설정 시 생성 thread는 auth 사용자 소유자로 자동 귀속됩니다.
@@ -212,11 +212,11 @@ Chainlit은 step type으로 메시지와 도구/실행을 구분합니다.
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.3.0 매핑:
+Easierlit v0.3.1 매핑:
 
 - `app.recv()` 입력은 사용자 메시지 흐름
 - `app.arecv()` 입력도 동일한 사용자 메시지 흐름 계약을 따름
-- `app.send()` / `app.add_message()` 출력은 assistant 메시지 흐름
+- `app.send()` 출력은 assistant 메시지 흐름(`app.add_message()`는 deprecated alias)
 - Easierlit 공개 API에는 전용 tool-call step 생성 API가 없습니다
 
 UI 옵션 참고(Chainlit): `ui.cot`는 `full`, `tool_call`, `hidden`을 지원합니다.
@@ -250,7 +250,7 @@ SQLite `tags` 바인딩 이슈:
 - `examples/thread_crud.py`
 - `examples/thread_create_in_run_func.py`
 
-## 14. 릴리스 체크리스트 (v0.3.0)
+## 14. 릴리스 체크리스트 (v0.3.1)
 
 ```bash
 python3 -m py_compile examples/*.py
@@ -261,5 +261,5 @@ python3 -m twine check dist/*
 
 추가 확인:
 
-- `pyproject.toml` version이 `0.3.0`
+- `pyproject.toml` version이 `0.3.1`
 - 문서 링크 정상(`README.md`, `README.ko.md`, `docs/usage.en.md`, `docs/usage.ko.md`, `docs/api-reference.en.md`, `docs/api-reference.ko.md`)

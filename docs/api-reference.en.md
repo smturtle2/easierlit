@@ -1,8 +1,8 @@
-# Easierlit API Reference (v0.3.0)
+# Easierlit API Reference (v0.3.1)
 
 ## 1. Scope and Contract Notes
 
-- Version target: `0.3.0`
+- Version target: `0.3.1`
 - Runtime core: Chainlit (`chainlit>=2.9,<3`)
 - This document describes public APIs that are currently supported.
 - `EasierlitClient` is thread-worker only (`worker_mode="thread"`).
@@ -159,7 +159,7 @@ Behavior:
 - Returns generated `message_id`.
 - Command is later applied by runtime dispatcher.
 
-### 4.4 `EasierlitApp.add_message`
+### 4.4 `EasierlitApp.add_message` (deprecated alias)
 
 ```python
 add_message(
@@ -170,7 +170,7 @@ add_message(
 ) -> str
 ```
 
-- Alias of `send` with same queue-based behavior.
+- Deprecated alias of `send` with the same queue-based behavior.
 
 ### 4.5 `EasierlitApp.update_message`
 
@@ -236,22 +236,23 @@ get_thread(thread_id: str) -> dict
 
 ```python
 new_thread(
-    thread_id: str,
     name: str | None = None,
     metadata: dict | None = None,
     tags: list[str] | None = None,
-) -> None
+) -> str
 ```
 
 Behavior:
 
-- Creates a thread only when target thread id does not exist.
+- Generates `thread_id` internally using UUID4.
+- Retries up to 16 times when generated id already exists.
+- Returns the created `thread_id`.
 - With auth configured, auto-resolves/creates owner user and writes `user_id`.
 - SQLite SQLAlchemyDataLayer stores `tags` as JSON string.
 
 Raises:
 
-- `ValueError` if thread already exists.
+- `RuntimeError` if unique `thread_id` allocation fails after 16 attempts.
 
 ### 4.10 `EasierlitApp.update_thread`
 
@@ -362,12 +363,13 @@ OutgoingCommand(
 | `RunFuncExecutionError` | Worker raised uncaught error | Inspect traceback, fix run_func logic |
 | `DataPersistenceNotEnabledError` | Thread CRUD without configured data layer | Enable persistence or register data layer |
 | `ThreadSessionNotActiveError` | Applying message command without active session and without data layer | Ensure session is active or configure persistence fallback |
+| `RuntimeError` | `new_thread()` failed to allocate unique ID after retries | Inspect id generation/collision behavior and retry |
 | `ValueError` | Invalid worker mode/run_func mode, missing user/thread | Validate inputs and identifiers |
 
 ## 7. Chainlit Message vs Tool-call Mapping
 
 - Incoming `app.recv/arecv` maps to user-message flow.
-- Outgoing `app.send/add_message` maps to assistant-message flow.
+- Outgoing `app.send` maps to assistant-message flow (`add_message` is a deprecated alias).
 - Easierlit public API does not expose dedicated tool-call step creation.
 
 ## 8. Method-to-Example Index
@@ -376,5 +378,5 @@ OutgoingCommand(
 |---|---|
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
 | `EasierlitApp.list_threads`, `get_thread`, `new_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
-| `EasierlitApp.send`, `add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
+| `EasierlitApp.send`, `add_message` (deprecated alias), `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | Auth + persistence configs | `examples/custom_auth.py` |
