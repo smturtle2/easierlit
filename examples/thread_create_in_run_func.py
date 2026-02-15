@@ -1,5 +1,3 @@
-from uuid import uuid4
-
 from easierlit import (
     AppClosedError,
     EasierlitAuthConfig,
@@ -40,13 +38,11 @@ def run_func(app: EasierlitApp):
 
             if text.startswith("/new"):
                 raw_name = text[len("/new") :].strip()
-                thread_id = str(uuid4())
-                thread_name = raw_name or f"Created from run_func ({thread_id[:8]})"
+                thread_name = raw_name or "Created from run_func"
 
                 # Public API only: create thread + add first message.
                 # Easierlit normalizes this for SQLite-backed SQLAlchemyDataLayer.
-                app.new_thread(
-                    thread_id=thread_id,
+                thread_id = app.new_thread(
                     name=thread_name,
                     metadata={
                         "created_by": "run_func",
@@ -54,7 +50,7 @@ def run_func(app: EasierlitApp):
                     },
                     tags=["run-func-created"],
                 )
-                app.add_message(
+                app.send(
                     thread_id=thread_id,
                     content=(
                         "This thread was created inside run_func.\n"

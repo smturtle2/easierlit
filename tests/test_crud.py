@@ -208,23 +208,46 @@ def test_thread_crud_with_data_layer(monkeypatch):
 def test_new_thread_creates_when_missing(monkeypatch):
     fake = FakeDataLayer()
     monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
+    monkeypatch.setattr("easierlit.app.uuid4", lambda: "thread-new")
 
     app = EasierlitApp()
-    app.new_thread("thread-new", name="Created", metadata={"x": 1}, tags=["tag"])
+    thread_id = app.new_thread(name="Created", metadata={"x": 1}, tags=["tag"])
 
-    assert fake.updated_threads[0]["thread_id"] == "thread-new"
+    assert thread_id == "thread-new"
+    assert fake.updated_threads[0]["thread_id"] == thread_id
     assert fake.updated_threads[0]["name"] == "Created"
     assert fake.updated_threads[0]["metadata"] == {"x": 1}
     assert fake.updated_threads[0]["tags"] == ["tag"]
 
 
-def test_new_thread_raises_when_thread_exists(monkeypatch):
+def test_new_thread_retries_when_generated_id_exists(monkeypatch):
     fake = FakeDataLayer()
+    fake._threads.add("thread-collision")
     monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
 
+    generated_ids = iter(["thread-collision", "thread-created"])
+    monkeypatch.setattr("easierlit.app.uuid4", lambda: next(generated_ids))
+
     app = EasierlitApp()
-    with pytest.raises(ValueError, match="already exists"):
-        app.new_thread("thread-1", name="Duplicate")
+    thread_id = app.new_thread(name="Created")
+
+    assert thread_id == "thread-created"
+    assert fake.updated_threads[0]["thread_id"] == "thread-created"
+    assert fake.requested_threads[:2] == ["thread-collision", "thread-created"]
+
+
+def test_new_thread_raises_when_unique_id_allocation_fails(monkeypatch):
+    fake = FakeDataLayer()
+    fake._threads.add("thread-duplicate")
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
+    monkeypatch.setattr("easierlit.app.uuid4", lambda: "thread-duplicate")
+
+    app = EasierlitApp()
+    with pytest.raises(RuntimeError, match="Failed to allocate unique thread_id"):
+        app.new_thread(name="Duplicate")
+
+    assert len(fake.requested_threads) == 16
+    assert fake.updated_threads == []
 
 
 def test_update_thread_raises_when_thread_missing(monkeypatch):

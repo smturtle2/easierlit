@@ -57,6 +57,7 @@ class EasierlitApp:
         author: str = "Assistant",
         metadata: dict | None = None,
     ) -> str:
+        """Enqueue an assistant message and return the generated message id."""
         message_id = str(uuid4())
         self._put_outgoing(
             OutgoingCommand(
@@ -77,6 +78,7 @@ class EasierlitApp:
         author: str = "Assistant",
         metadata: dict | None = None,
     ) -> str:
+        """Deprecated alias of send(). Prefer send() for new code."""
         return self.send(
             thread_id=thread_id,
             content=content,
@@ -162,18 +164,33 @@ class EasierlitApp:
 
     def new_thread(
         self,
-        thread_id: str,
         name: str | None = None,
         metadata: dict | None = None,
         tags: list[str] | None = None,
-    ) -> None:
-        self._write_thread(
-            thread_id=thread_id,
-            name=name,
-            metadata=metadata,
-            tags=tags,
-            require_existing=False,
-        )
+    ) -> str:
+        data_layer = self._get_data_layer_or_raise()
+        prepared_tags = self._prepare_tags_for_update(tags, data_layer)
+
+        async def _new_thread() -> str:
+            owner_user_id = await self._resolve_default_owner_user_id(data_layer)
+            for _ in range(16):
+                thread_id = str(uuid4())
+                existing = await data_layer.get_thread(thread_id)
+                if existing is not None:
+                    continue
+
+                await data_layer.update_thread(
+                    thread_id=thread_id,
+                    name=name,
+                    user_id=owner_user_id,
+                    metadata=metadata,
+                    tags=prepared_tags,
+                )
+                return thread_id
+
+            raise RuntimeError("Failed to allocate unique thread_id.")
+
+        return self._runtime.run_coroutine_sync(_new_thread())
 
     def _write_thread(
         self,
