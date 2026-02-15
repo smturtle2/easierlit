@@ -5,7 +5,7 @@ import pytest
 from easierlit import AppClosedError, EasierlitApp, IncomingMessage
 
 
-def test_recv_send_update_delete_flow():
+def test_recv_send_add_update_delete_flow():
     app = EasierlitApp()
 
     incoming = IncomingMessage(
@@ -27,16 +27,22 @@ def test_recv_send_update_delete_flow():
     assert send_cmd.message_id == sent_message_id
     assert send_cmd.content == "world"
 
-    app.update_message(thread_id="thread-1", message_id=sent_message_id, content="new")
+    added_message_id = app.add_message(thread_id="thread-1", content="added", author="Bot")
+    add_cmd = app._pop_outgoing(timeout=1.0)
+    assert add_cmd.command == "send"
+    assert add_cmd.message_id == added_message_id
+    assert add_cmd.content == "added"
+
+    app.update_message(thread_id="thread-1", message_id=added_message_id, content="new")
     update_cmd = app._pop_outgoing(timeout=1.0)
     assert update_cmd.command == "update"
-    assert update_cmd.message_id == sent_message_id
+    assert update_cmd.message_id == added_message_id
     assert update_cmd.content == "new"
 
-    app.delete_message(thread_id="thread-1", message_id=sent_message_id)
+    app.delete_message(thread_id="thread-1", message_id=added_message_id)
     delete_cmd = app._pop_outgoing(timeout=1.0)
     assert delete_cmd.command == "delete"
-    assert delete_cmd.message_id == sent_message_id
+    assert delete_cmd.message_id == added_message_id
 
 
 def test_recv_timeout_and_close():

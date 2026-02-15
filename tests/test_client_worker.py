@@ -20,12 +20,13 @@ def _crashing_worker(_app: EasierlitApp) -> None:
     raise RuntimeError("worker crashed")
 
 
-def _crashing_process_worker(_app: EasierlitApp) -> None:
-    raise RuntimeError("process worker crashed")
-
-
 def _sync_noop_worker(_app: EasierlitApp) -> None:
     return None
+
+
+def test_invalid_worker_mode_raises_value_error():
+    with pytest.raises(ValueError, match="worker_mode"):
+        EasierlitClient(run_func=_sync_noop_worker, worker_mode="process")  # type: ignore[arg-type]
 
 
 def test_invalid_run_func_mode_raises_value_error():
@@ -55,28 +56,6 @@ def test_thread_worker_run_and_stop():
     client.stop()
 
 
-def test_process_worker_run_and_stop():
-    app = EasierlitApp()
-    client = EasierlitClient(run_func=_single_message_worker, worker_mode="process")
-    client.run(app)
-
-    app._enqueue_incoming(
-        IncomingMessage(
-            thread_id="thread-2",
-            session_id="session-2",
-            message_id="msg-2",
-            content="hi",
-            author="User",
-        )
-    )
-
-    command = app._pop_outgoing(timeout=5.0)
-    assert command.command == "send"
-    assert command.content == "HI"
-
-    client.stop()
-
-
 def test_thread_async_worker_auto_mode_run_and_stop():
     app = EasierlitApp()
     client = EasierlitClient(run_func=_single_message_async_worker, worker_mode="thread")
@@ -95,28 +74,6 @@ def test_thread_async_worker_auto_mode_run_and_stop():
     command = app._pop_outgoing(timeout=3.0)
     assert command.command == "send"
     assert command.content == "HEY"
-
-    client.stop()
-
-
-def test_process_async_worker_auto_mode_run_and_stop():
-    app = EasierlitApp()
-    client = EasierlitClient(run_func=_single_message_async_worker, worker_mode="process")
-    client.run(app)
-
-    app._enqueue_incoming(
-        IncomingMessage(
-            thread_id="thread-4",
-            session_id="session-4",
-            message_id="msg-4",
-            content="yo",
-            author="User",
-        )
-    )
-
-    command = app._pop_outgoing(timeout=5.0)
-    assert command.command == "send"
-    assert command.content == "YO"
 
     client.stop()
 
@@ -203,26 +160,3 @@ def test_thread_worker_records_error_and_invokes_crash_handler():
     with pytest.raises(RunFuncExecutionError):
         client.stop()
 
-
-def test_process_worker_records_error_and_invokes_crash_handler():
-    app = EasierlitApp()
-    crash_event = threading.Event()
-    crash_payloads: list[str] = []
-
-    client = EasierlitClient(run_func=_crashing_process_worker, worker_mode="process")
-    client.set_worker_crash_handler(
-        lambda traceback_text: (
-            crash_payloads.append(traceback_text),
-            crash_event.set(),
-        )
-    )
-    client.run(app)
-
-    assert crash_event.wait(timeout=5.0)
-    error = client.peek_worker_error()
-    assert error is not None
-    assert "process worker crashed" in error
-    assert len(crash_payloads) == 1
-
-    with pytest.raises(RunFuncExecutionError):
-        client.stop()

@@ -27,6 +27,7 @@ class FakeDataLayer:
         self.requested_threads = []
         self.created_users = []
         self._users = users or {"known-user": "user-1"}
+        self._threads = {"thread-1"}
 
     async def get_user(self, identifier: str):
         user_id = self._users.get(identifier)
@@ -66,7 +67,7 @@ class FakeDataLayer:
 
     async def get_thread(self, thread_id: str):
         self.requested_threads.append(thread_id)
-        if thread_id != "thread-1":
+        if thread_id not in self._threads:
             return None
         return {"id": thread_id, "name": "Thread 1", "tags": ["existing-tag"]}
 
@@ -87,6 +88,7 @@ class FakeDataLayer:
                 "tags": tags,
             }
         )
+        self._threads.add(thread_id)
 
     async def delete_thread(self, thread_id: str):
         self.deleted_threads.append(thread_id)
@@ -167,41 +169,79 @@ def _reset_runtime():
     runtime.unbind()
 
 
+def _apply_next_outgoing_command(app: EasierlitApp):
+    runtime = get_runtime()
+    command = app._pop_outgoing(timeout=1.0)
+    runtime.run_coroutine_sync(runtime.apply_outgoing_command(command))
+    return command
+
+
 def test_thread_crud_requires_data_layer(monkeypatch):
-    monkeypatch.setattr("easierlit.client.get_data_layer", lambda: None)
-    client = EasierlitClient(run_func=lambda _app: None)
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: None)
+    app = EasierlitApp()
 
     with pytest.raises(DataPersistenceNotEnabledError):
-        client.list_threads()
+        app.list_threads()
 
 
 def test_thread_crud_with_data_layer(monkeypatch):
     fake = FakeDataLayer()
-    monkeypatch.setattr("easierlit.client.get_data_layer", lambda: fake)
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
 
-    client = EasierlitClient(run_func=lambda _app: None)
-    threads = client.list_threads(first=5, user_identifier="known-user")
+    app = EasierlitApp()
+    threads = app.list_threads(first=5, user_identifier="known-user")
     assert len(threads.data) == 1
 
-    thread = client.get_thread("thread-1")
+    thread = app.get_thread("thread-1")
     assert thread["id"] == "thread-1"
     assert thread["tags"] == ["existing-tag"]
 
-    client.update_thread("thread-1", name="Renamed", metadata={"x": 1}, tags=["tag"])
+    app.update_thread("thread-1", name="Renamed", metadata={"x": 1}, tags=["tag"])
     assert fake.updated_threads[0]["name"] == "Renamed"
     assert fake.updated_threads[0]["user_id"] is None
     assert fake.updated_threads[0]["tags"] == ["tag"]
 
-    client.delete_thread("thread-1")
+    app.delete_thread("thread-1")
     assert fake.deleted_threads == ["thread-1"]
+
+
+def test_new_thread_creates_when_missing(monkeypatch):
+    fake = FakeDataLayer()
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
+
+    app = EasierlitApp()
+    app.new_thread("thread-new", name="Created", metadata={"x": 1}, tags=["tag"])
+
+    assert fake.updated_threads[0]["thread_id"] == "thread-new"
+    assert fake.updated_threads[0]["name"] == "Created"
+    assert fake.updated_threads[0]["metadata"] == {"x": 1}
+    assert fake.updated_threads[0]["tags"] == ["tag"]
+
+
+def test_new_thread_raises_when_thread_exists(monkeypatch):
+    fake = FakeDataLayer()
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
+
+    app = EasierlitApp()
+    with pytest.raises(ValueError, match="already exists"):
+        app.new_thread("thread-1", name="Duplicate")
+
+
+def test_update_thread_raises_when_thread_missing(monkeypatch):
+    fake = FakeDataLayer()
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
+
+    app = EasierlitApp()
+    with pytest.raises(ValueError, match="not found"):
+        app.update_thread("missing-thread", name="Renamed")
 
 
 def test_sqlite_update_thread_serializes_tags(monkeypatch):
     fake = FakeSQLiteDataLayer()
-    monkeypatch.setattr("easierlit.client.get_data_layer", lambda: fake)
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
 
-    client = EasierlitClient(run_func=lambda _app: None)
-    client.update_thread("thread-1", tags=["run-func-created"])
+    app = EasierlitApp()
+    app.update_thread("thread-1", tags=["run-func-created"])
 
     assert fake.updated_threads[0]["user_id"] is None
     assert fake.updated_threads[0]["tags"] == '["run-func-created"]'
@@ -209,10 +249,10 @@ def test_sqlite_update_thread_serializes_tags(monkeypatch):
 
 def test_sqlite_update_thread_serializes_tags_with_engine_drivername(monkeypatch):
     fake = FakeSQLiteEngineOnlyDataLayer()
-    monkeypatch.setattr("easierlit.client.get_data_layer", lambda: fake)
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
 
-    client = EasierlitClient(run_func=lambda _app: None)
-    client.update_thread("thread-1", tags=["run-func-created"])
+    app = EasierlitApp()
+    app.update_thread("thread-1", tags=["run-func-created"])
 
     assert fake.updated_threads[0]["user_id"] is None
     assert fake.updated_threads[0]["tags"] == '["run-func-created"]'
@@ -220,13 +260,14 @@ def test_sqlite_update_thread_serializes_tags_with_engine_drivername(monkeypatch
 
 def test_update_thread_auto_sets_owner_from_auth_existing_user(monkeypatch):
     fake = FakeDataLayer(users={"admin": "user-admin"})
-    monkeypatch.setattr("easierlit.client.get_data_layer", lambda: fake)
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
 
     runtime = get_runtime()
+    app = EasierlitApp()
     client = EasierlitClient(run_func=lambda _app: None)
     runtime.bind(
         client=client,
-        app=EasierlitApp(),
+        app=app,
         auth=EasierlitAuthConfig(
             username="admin",
             password="admin",
@@ -235,22 +276,23 @@ def test_update_thread_auto_sets_owner_from_auth_existing_user(monkeypatch):
         ),
     )
 
-    client.update_thread("thread-owned", name="Owned")
+    app.update_thread("thread-1", name="Owned")
 
-    assert fake.updated_threads[0]["thread_id"] == "thread-owned"
+    assert fake.updated_threads[0]["thread_id"] == "thread-1"
     assert fake.updated_threads[0]["user_id"] == "user-admin"
     assert fake.created_users == []
 
 
 def test_update_thread_auto_creates_owner_when_missing(monkeypatch):
     fake = FakeDataLayer(users={})
-    monkeypatch.setattr("easierlit.client.get_data_layer", lambda: fake)
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
 
     runtime = get_runtime()
+    app = EasierlitApp()
     client = EasierlitClient(run_func=lambda _app: None)
     runtime.bind(
         client=client,
-        app=EasierlitApp(),
+        app=app,
         auth=EasierlitAuthConfig(
             username="admin",
             password="admin",
@@ -259,7 +301,7 @@ def test_update_thread_auto_creates_owner_when_missing(monkeypatch):
         ),
     )
 
-    client.update_thread("thread-owned", name="Owned")
+    app.update_thread("thread-1", name="Owned")
 
     assert fake.created_users[0]["identifier"] == "admin"
     assert fake.created_users[0]["metadata"] == {"role": "admin"}
@@ -268,20 +310,20 @@ def test_update_thread_auto_creates_owner_when_missing(monkeypatch):
 
 def test_sqlite_get_thread_normalizes_tags(monkeypatch):
     fake = FakeSQLiteDataLayer()
-    monkeypatch.setattr("easierlit.client.get_data_layer", lambda: fake)
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
 
-    client = EasierlitClient(run_func=lambda _app: None)
-    thread = client.get_thread("thread-1")
+    app = EasierlitApp()
+    thread = app.get_thread("thread-1")
 
     assert thread["tags"] == ["tag-a"]
 
 
 def test_sqlite_list_threads_normalizes_tags(monkeypatch):
     fake = FakeSQLiteDataLayer()
-    monkeypatch.setattr("easierlit.client.get_data_layer", lambda: fake)
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
 
-    client = EasierlitClient(run_func=lambda _app: None)
-    threads = client.list_threads(first=5)
+    app = EasierlitApp()
+    threads = app.list_threads(first=5)
 
     assert threads.data[0]["tags"] == ["tag-a", "tag-b"]
 
@@ -290,23 +332,27 @@ def test_message_crud_falls_back_to_data_layer_when_no_session(monkeypatch):
     fake = FakeDataLayer()
     monkeypatch.setattr("easierlit.runtime.get_data_layer", lambda: fake)
 
-    client = EasierlitClient(run_func=lambda _app: None)
-    message_id = client.add_message("thread-1", "hello", author="Bot")
+    app = EasierlitApp()
+    message_id = app.add_message("thread-1", "hello", author="Bot")
+    _apply_next_outgoing_command(app)
     assert fake.created_steps[0]["id"] == message_id
 
-    client.update_message("thread-1", message_id, "updated")
+    app.update_message("thread-1", message_id, "updated")
+    _apply_next_outgoing_command(app)
     assert fake.updated_steps[0]["id"] == message_id
 
-    client.delete_message("thread-1", message_id)
+    app.delete_message("thread-1", message_id)
+    _apply_next_outgoing_command(app)
     assert fake.deleted_steps == [message_id]
 
 
 def test_message_crud_raises_without_session_and_data_layer(monkeypatch):
     monkeypatch.setattr("easierlit.runtime.get_data_layer", lambda: None)
-    client = EasierlitClient(run_func=lambda _app: None)
+    app = EasierlitApp()
 
+    app.add_message("thread-unknown", "hello")
     with pytest.raises(ThreadSessionNotActiveError):
-        client.add_message("thread-unknown", "hello")
+        _apply_next_outgoing_command(app)
 
 
 def test_message_crud_fallback_works_with_queue_decorated_data_layer(monkeypatch):
@@ -324,10 +370,15 @@ def test_message_crud_fallback_works_with_queue_decorated_data_layer(monkeypatch
     monkeypatch.setattr("easierlit.runtime.get_data_layer", lambda: fake)
     monkeypatch.setattr("easierlit.runtime.init_http_context", fake_init_http_context)
 
-    client = EasierlitClient(run_func=lambda _app: None)
-    message_id = client.add_message("thread-queue", "hello", author="Bot")
-    client.update_message("thread-queue", message_id, "updated")
-    client.delete_message("thread-queue", message_id)
+    app = EasierlitApp()
+    message_id = app.add_message("thread-queue", "hello", author="Bot")
+    _apply_next_outgoing_command(app)
+
+    app.update_message("thread-queue", message_id, "updated")
+    _apply_next_outgoing_command(app)
+
+    app.delete_message("thread-queue", message_id)
+    _apply_next_outgoing_command(app)
 
     assert len(context_calls) == 3
     assert context_calls[0] == ("thread-queue", "webapp")

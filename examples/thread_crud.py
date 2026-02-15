@@ -6,14 +6,7 @@ from easierlit import (
     EasierlitServer,
 )
 
-client: EasierlitClient | None = None
-
-
 def run_func(app):
-    global client
-    if client is None:
-        raise RuntimeError("Client is not initialized.")
-
     help_text = (
         "Commands:\n"
         "- /threads: list recent threads for admin user\n"
@@ -41,7 +34,7 @@ def run_func(app):
             continue
 
         if text == "/threads":
-            threads = client.list_threads(first=10, user_identifier="admin")
+            threads = app.list_threads(first=10, user_identifier="admin")
             if not threads.data:
                 content = "No threads found."
             else:
@@ -67,7 +60,7 @@ def run_func(app):
                 )
                 continue
 
-            client.update_thread(incoming.thread_id, name=new_name)
+            app.update_thread(incoming.thread_id, name=new_name)
             app.send(
                 thread_id=incoming.thread_id,
                 content=f"Renamed current thread to: {new_name}",
@@ -85,7 +78,7 @@ def run_func(app):
                 )
                 continue
 
-            client.delete_thread(thread_id)
+            app.delete_thread(thread_id)
             app.send(
                 thread_id=incoming.thread_id,
                 content=f"Deleted thread: {thread_id}",

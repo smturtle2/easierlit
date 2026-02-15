@@ -6,16 +6,10 @@ from easierlit import (
     EasierlitClient,
     EasierlitPersistenceConfig,
     EasierlitServer,
+    EasierlitApp,
 )
 
-client: EasierlitClient | None = None
-
-
-def run_func(app):
-    global client
-    if client is None:
-        raise RuntimeError("Client is not initialized.")
-
+def run_func(app: EasierlitApp):
     help_text = (
         "Commands:\n"
         "- /new [name]: create a new thread from run_func\n"
@@ -49,9 +43,9 @@ def run_func(app):
                 thread_id = str(uuid4())
                 thread_name = raw_name or f"Created from run_func ({thread_id[:8]})"
 
-                # Public API only: upsert thread + add first message.
+                # Public API only: create thread + add first message.
                 # Easierlit normalizes this for SQLite-backed SQLAlchemyDataLayer.
-                client.update_thread(
+                app.new_thread(
                     thread_id=thread_id,
                     name=thread_name,
                     metadata={
@@ -60,7 +54,7 @@ def run_func(app):
                     },
                     tags=["run-func-created"],
                 )
-                client.add_message(
+                app.add_message(
                     thread_id=thread_id,
                     content=(
                         "This thread was created inside run_func.\n"
@@ -94,7 +88,7 @@ def run_func(app):
                     continue
 
                 try:
-                    thread = client.get_thread(target_id)
+                    thread = app.get_thread(target_id)
                 except ValueError:
                     app.send(
                         thread_id=incoming.thread_id,
