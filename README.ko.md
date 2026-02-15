@@ -2,7 +2,7 @@
 
 # Easierlit
 
-[![Version](https://img.shields.io/badge/version-0.2.0-2563eb)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.3.0-2563eb)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-0ea5e9)](pyproject.toml)
 [![Chainlit](https://img.shields.io/badge/chainlit-2.9%20to%203-10b981)](https://docs.chainlit.io)
 
@@ -21,7 +21,7 @@ Chainlit의 코어 기능은 유지하면서 워커 루프, 메시지 흐름, �
 
 - 런타임 역할 분리가 명확합니다.
 - `EasierlitServer`: 메인 프로세스에서 Chainlit 서버 실행
-- `EasierlitClient`: 워커에서 `run_func(app)` 실행
+- `EasierlitClient`: 단일 thread 워커에서 `run_func(app)` 실행
 - `EasierlitApp`: 입력/출력 큐 브리지
 - 운영 기본값이 실용적입니다.
 - headless 서버 실행
@@ -42,7 +42,7 @@ User UI
   -> Easierlit runtime bridge
   -> EasierlitApp incoming queue
   -> worker의 run_func(app)
-  -> app.send(...) / client.* CRUD
+  -> app.* APIs (message + thread CRUD)
   -> runtime dispatcher
   -> realtime session OR data-layer fallback
 ```
@@ -81,7 +81,7 @@ def run_func(app):
         )
 
 
-client = EasierlitClient(run_func=run_func, worker_mode="thread")
+client = EasierlitClient(run_func=run_func)
 server = EasierlitServer(client=client)
 server.serve()  # blocking
 ```
@@ -108,14 +108,13 @@ async def run_func(app):
 
 client = EasierlitClient(
     run_func=run_func,
-    worker_mode="thread",
     run_func_mode="auto",  # auto/sync/async
 )
 server = EasierlitServer(client=client)
 server.serve()
 ```
 
-## 공개 API (v0.2.0)
+## 공개 API (v0.3.0)
 
 ```python
 EasierlitServer(
@@ -132,8 +131,14 @@ EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
 EasierlitApp.send(thread_id, content, author="Assistant", metadata=None)
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None)
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.delete_message(thread_id, message_id)
+EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
+EasierlitApp.get_thread(thread_id)
+EasierlitApp.new_thread(thread_id, name=None, metadata=None, tags=None)
+EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
+EasierlitApp.delete_thread(thread_id)
 EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
@@ -169,22 +174,23 @@ Easierlit에서 일반적인 구성:
 Message API:
 
 - `app.send(...)`
+- `app.add_message(...)`
 - `app.update_message(...)`
 - `app.delete_message(...)`
-- `client.add_message(...)`
-- `client.update_message(...)`
-- `client.delete_message(...)`
 
 Thread API:
 
-- `client.list_threads(...)`
-- `client.get_thread(thread_id)`
-- `client.update_thread(...)`
-- `client.delete_thread(thread_id)`
+- `app.list_threads(...)`
+- `app.get_thread(thread_id)`
+- `app.new_thread(...)`
+- `app.update_thread(...)`
+- `app.delete_thread(thread_id)`
 
 동작 핵심:
 
-- auth 설정 시 `client.update_thread(...)`는 소유자를 자동 귀속
+- `app.new_thread(...)`는 thread가 없을 때만 생성
+- `app.update_thread(...)`는 기존 thread만 수정
+- auth 설정 시 `app.new_thread(...)`/`app.update_thread(...)` 모두 소유자를 자동 귀속
 - SQLite SQLAlchemyDataLayer 경로에서 thread `tags` 자동 정규화
 - active websocket session이 없어도 내부 HTTP-context fallback으로 data-layer message CRUD 수행
 
@@ -210,7 +216,7 @@ Tool/run 계열:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.2.0 공개 API는 메시지 중심이며,
+Easierlit v0.3.0 공개 API는 메시지 중심이며,
 전용 tool-call step 생성 API는 아직 제공하지 않습니다.
 
 ## 예제 맵
@@ -229,5 +235,5 @@ Easierlit v0.2.0 공개 API는 메시지 중심이며,
 
 ## 마이그레이션 노트
 
-과거 초안에서 제거된 API는 v0.2.0 공개 사용 범위에 포함되지 않습니다.
+과거 초안에서 제거된 API는 v0.3.0 공개 사용 범위에 포함되지 않습니다.
 README 및 API 레퍼런스에 명시된 API만 사용하세요.

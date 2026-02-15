@@ -1,6 +1,6 @@
-# Easierlit 사용 가이드 (v0.2.0)
+# Easierlit 사용 가이드 (v0.3.0)
 
-이 문서는 Easierlit v0.2.0의 상세 사용 레퍼런스입니다.
+이 문서는 Easierlit v0.3.0의 상세 사용 레퍼런스입니다.
 메서드 단위의 정확한 계약(시그니처/예외/실패모드)은 아래 API 레퍼런스를 우선 참고하세요.
 
 - `docs/api-reference.en.md`
@@ -8,7 +8,7 @@
 
 ## 1. 범위와 버전
 
-- 대상 버전: `0.2.0`
+- 대상 버전: `0.3.0`
 - 런타임 코어: Chainlit (`chainlit>=2.9,<3`)
 - 현재 공개 API 기준만 다룹니다.
 
@@ -17,7 +17,7 @@
 Easierlit은 3개 구성 요소로 동작합니다.
 
 - `EasierlitServer`: 메인 프로세스에서 Chainlit 시작
-- `EasierlitClient`: 전역 워커 1개에서 `run_func(app)` 실행
+- `EasierlitClient`: 전역 thread 워커 1개에서 `run_func(app)` 실행
 - `EasierlitApp`: 사용자 입력과 출력 명령을 연결하는 큐 브리지
 
 상위 흐름:
@@ -25,7 +25,7 @@ Easierlit은 3개 구성 요소로 동작합니다.
 1. `server.serve()`가 runtime bind 후 Chainlit 실행
 2. Chainlit `on_message`가 입력을 `IncomingMessage`로 변환
 3. 워커가 `app.recv()` 또는 `await app.arecv()`로 입력을 소비
-4. 워커가 `app.send(...)` 또는 client CRUD API로 출력/저장
+4. 워커가 `app.*` API(message + thread CRUD)로 출력/저장
 
 ## 3. 표준 부트스트랩 패턴
 
@@ -49,7 +49,7 @@ def run_func(app):
         )
 
 
-client = EasierlitClient(run_func=run_func, worker_mode="thread")
+client = EasierlitClient(run_func=run_func)
 server = EasierlitServer(client=client)
 server.serve()
 ```
@@ -57,9 +57,8 @@ server.serve()
 참고:
 
 - `serve()`는 블로킹입니다.
-- `worker_mode`는 `"thread"`, `"process"`를 지원합니다.
+- `worker_mode`는 `"thread"`만 지원합니다.
 - `run_func`는 sync/async 모두 지원하며 기본값 `run_func_mode="auto"`가 자동 판별합니다.
-- process 모드에서는 `run_func`와 payload가 picklable이어야 합니다.
 
 ## 4. 공개 API 시그니처
 
@@ -80,8 +79,14 @@ EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
 EasierlitApp.send(thread_id, content, author="Assistant", metadata=None)
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None)
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.delete_message(thread_id, message_id)
+EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
+EasierlitApp.get_thread(thread_id)
+EasierlitApp.new_thread(thread_id, name=None, metadata=None, tags=None)
+EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
+EasierlitApp.delete_thread(thread_id)
 EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
@@ -149,34 +154,36 @@ Thread History 표시 조건(Chainlit 정책):
 - 서버 종료를 트리거함
 - 종료 진행 중 입력 enqueue는 요약 메시지 방식으로 억제
 
-## 8. 워커에서 Thread CRUD
+## 8. App에서 Thread CRUD
 
-`EasierlitClient` 메서드:
+`EasierlitApp` 메서드:
 
 - `list_threads(first=20, cursor=None, search=None, user_identifier=None)`
 - `get_thread(thread_id)`
+- `new_thread(thread_id, name=None, metadata=None, tags=None)`
 - `update_thread(thread_id, name=None, metadata=None, tags=None)`
 - `delete_thread(thread_id)`
 
 동작 상세:
 
 - Thread CRUD는 data layer가 필요합니다.
-- auth 설정 시 `update_thread`는 소유자 user를 자동 조회/생성 후 `user_id`로 저장합니다.
+- `new_thread`는 대상 thread id가 없을 때만 생성합니다.
+- `update_thread`는 대상 thread가 이미 있을 때만 수정합니다.
+- auth 설정 시 `new_thread`/`update_thread` 모두 소유자 user를 자동 조회/생성 후 `user_id`로 저장합니다.
 - SQLite SQLAlchemyDataLayer에서는 `tags` list를 저장 시 JSON 직렬화하고 조회 시 list로 정규화합니다.
 
 ## 9. Message CRUD와 fallback
 
 메시지 메서드:
 
-- `app.send(...)`, `app.update_message(...)`, `app.delete_message(...)`
-- `client.add_message(...)`, `client.update_message(...)`, `client.delete_message(...)`
+- `app.send(...)`, `app.add_message(...)`, `app.update_message(...)`, `app.delete_message(...)`
 
 실행 모델:
 
 1. thread에 활성 websocket session이 있으면 realtime context로 반영
 2. session이 비활성이고 data layer가 있으면 persistence fallback 수행
 3. fallback 전에 내부 HTTP Chainlit context를 초기화
-4. session/data layer 모두 없으면 `ThreadSessionNotActiveError` 발생
+4. session/data layer 모두 없으면 queued command 적용 시 `ThreadSessionNotActiveError` 발생
 
 ## 10. run_func에서 새 thread 생성
 
@@ -185,8 +192,8 @@ Thread History 표시 조건(Chainlit 정책):
 패턴:
 
 1. 새 `thread_id` 생성(예: `uuid4`)
-2. `client.update_thread(...)`로 메타데이터 upsert
-3. `client.add_message(...)`로 bootstrap assistant message 저장
+2. `app.new_thread(...)`로 초기 메타데이터 생성
+3. `app.add_message(...)`로 bootstrap assistant message 저장
 4. 현재 thread로 생성 결과를 안내
 
 auth 설정 시 생성 thread는 auth 사용자 소유자로 자동 귀속됩니다.
@@ -205,11 +212,11 @@ Chainlit은 step type으로 메시지와 도구/실행을 구분합니다.
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.2.0 매핑:
+Easierlit v0.3.0 매핑:
 
 - `app.recv()` 입력은 사용자 메시지 흐름
 - `app.arecv()` 입력도 동일한 사용자 메시지 흐름 계약을 따름
-- `app.send()` / `client.add_message()` 출력은 assistant 메시지 흐름
+- `app.send()` / `app.add_message()` 출력은 assistant 메시지 흐름
 - Easierlit 공개 API에는 전용 tool-call step 생성 API가 없습니다
 
 UI 옵션 참고(Chainlit): `ui.cot`는 `full`, `tool_call`, `hidden`을 지원합니다.
@@ -243,7 +250,7 @@ SQLite `tags` 바인딩 이슈:
 - `examples/thread_crud.py`
 - `examples/thread_create_in_run_func.py`
 
-## 14. 릴리스 체크리스트 (v0.2.0)
+## 14. 릴리스 체크리스트 (v0.3.0)
 
 ```bash
 python3 -m py_compile examples/*.py
@@ -254,5 +261,5 @@ python3 -m twine check dist/*
 
 추가 확인:
 
-- `pyproject.toml` version이 `0.2.0`
+- `pyproject.toml` version이 `0.3.0`
 - 문서 링크 정상(`README.md`, `README.ko.md`, `docs/usage.en.md`, `docs/usage.ko.md`, `docs/api-reference.en.md`, `docs/api-reference.ko.md`)

@@ -2,7 +2,7 @@
 
 # Easierlit
 
-[![Version](https://img.shields.io/badge/version-0.2.0-2563eb)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.3.0-2563eb)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-0ea5e9)](pyproject.toml)
 [![Chainlit](https://img.shields.io/badge/chainlit-2.9%20to%203-10b981)](https://docs.chainlit.io)
 
@@ -21,7 +21,7 @@ It keeps the power of Chainlit while reducing the boilerplate for worker loops, 
 
 - Clear runtime split:
 - `EasierlitServer`: runs Chainlit in the main process.
-- `EasierlitClient`: runs your `run_func(app)` in one global worker.
+- `EasierlitClient`: runs your `run_func(app)` in one global thread worker.
 - `EasierlitApp`: queue bridge for inbound/outbound communication.
 - Production-oriented defaults:
 - headless server mode
@@ -41,8 +41,8 @@ User UI
   -> Chainlit callbacks (on_message / on_chat_start / ...)
   -> Easierlit runtime bridge
   -> EasierlitApp incoming queue
-  -> run_func(app) in worker (thread/process)
-  -> app.send(...) / client.* CRUD
+  -> run_func(app) in worker (thread)
+  -> app.* APIs (message + thread CRUD)
   -> runtime dispatcher
   -> realtime session OR data-layer fallback
 ```
@@ -81,7 +81,7 @@ def run_func(app):
         )
 
 
-client = EasierlitClient(run_func=run_func, worker_mode="thread")
+client = EasierlitClient(run_func=run_func)
 server = EasierlitServer(client=client)
 server.serve()  # blocking
 ```
@@ -108,14 +108,13 @@ async def run_func(app):
 
 client = EasierlitClient(
     run_func=run_func,
-    worker_mode="thread",
     run_func_mode="auto",  # auto/sync/async
 )
 server = EasierlitServer(client=client)
 server.serve()
 ```
 
-## Public API (v0.2.0)
+## Public API (v0.3.0)
 
 ```python
 EasierlitServer(
@@ -132,8 +131,14 @@ EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
 EasierlitApp.send(thread_id, content, author="Assistant", metadata=None)
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None)
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.delete_message(thread_id, message_id)
+EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
+EasierlitApp.get_thread(thread_id)
+EasierlitApp.new_thread(thread_id, name=None, metadata=None, tags=None)
+EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
+EasierlitApp.delete_thread(thread_id)
 EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
@@ -169,22 +174,23 @@ Typical Easierlit setup:
 Message APIs:
 
 - `app.send(...)`
+- `app.add_message(...)`
 - `app.update_message(...)`
 - `app.delete_message(...)`
-- `client.add_message(...)`
-- `client.update_message(...)`
-- `client.delete_message(...)`
 
 Thread APIs:
 
-- `client.list_threads(...)`
-- `client.get_thread(thread_id)`
-- `client.update_thread(...)`
-- `client.delete_thread(thread_id)`
+- `app.list_threads(...)`
+- `app.get_thread(thread_id)`
+- `app.new_thread(...)`
+- `app.update_thread(...)`
+- `app.delete_thread(thread_id)`
 
 Behavior highlights:
 
-- With auth enabled, `client.update_thread(...)` auto-assigns thread ownership.
+- `app.new_thread(...)` creates only when thread does not exist.
+- `app.update_thread(...)` updates only when thread already exists.
+- With auth enabled, both `app.new_thread(...)` and `app.update_thread(...)` auto-assign thread ownership.
 - SQLite SQLAlchemyDataLayer path auto normalizes thread `tags`.
 - If no active websocket session exists, Easierlit applies internal HTTP-context fallback for data-layer message CRUD.
 
@@ -210,7 +216,7 @@ Tool/run family includes:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.2.0 currently provides message-centric public APIs.
+Easierlit v0.3.0 currently provides message-centric public APIs.
 A dedicated tool-call step creation public API is not provided yet.
 
 ## Example Map
@@ -229,5 +235,5 @@ A dedicated tool-call step creation public API is not provided yet.
 
 ## Migration Note
 
-Removed APIs from earlier drafts are not part of v0.2.0 public usage.
+Removed APIs from earlier drafts are not part of v0.3.0 public usage.
 Use the APIs documented in this README and API Reference.
