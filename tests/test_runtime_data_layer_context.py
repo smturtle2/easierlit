@@ -26,7 +26,7 @@ def test_apply_outgoing_command_initializes_http_context(monkeypatch):
     monkeypatch.setattr("easierlit.runtime.init_http_context", fake_init_http_context)
 
     command = OutgoingCommand(
-        command="send",
+        command="add_message",
         thread_id="thread-ctx",
         message_id="msg-ctx",
         content="hello",

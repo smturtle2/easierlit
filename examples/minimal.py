@@ -10,7 +10,7 @@ def run_func(app):
         except AppClosedError:
             break
 
-        app.send(
+        app.add_message(
             thread_id=incoming.thread_id,
             content=f"Echo: {incoming.content}",
             author="EchoBot",

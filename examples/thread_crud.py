@@ -26,7 +26,7 @@ def run_func(app):
         text = incoming.content.strip()
 
         if text == "/help":
-            app.send(
+            app.add_message(
                 thread_id=incoming.thread_id,
                 content=help_text,
                 author="ThreadBot",
@@ -43,7 +43,7 @@ def run_func(app):
                     lines.append(f"- {item['id']} | {item.get('name') or '(no name)'}")
                 content = "\n".join(lines)
 
-            app.send(
+            app.add_message(
                 thread_id=incoming.thread_id,
                 content=content,
                 author="ThreadBot",
@@ -53,7 +53,7 @@ def run_func(app):
         if text.startswith("/rename "):
             new_name = text[len("/rename ") :].strip()
             if not new_name:
-                app.send(
+                app.add_message(
                     thread_id=incoming.thread_id,
                     content="Usage: /rename <name>",
                     author="ThreadBot",
@@ -61,7 +61,7 @@ def run_func(app):
                 continue
 
             app.update_thread(incoming.thread_id, name=new_name)
-            app.send(
+            app.add_message(
                 thread_id=incoming.thread_id,
                 content=f"Renamed current thread to: {new_name}",
                 author="ThreadBot",
@@ -71,7 +71,7 @@ def run_func(app):
         if text.startswith("/delete "):
             thread_id = text[len("/delete ") :].strip()
             if not thread_id:
-                app.send(
+                app.add_message(
                     thread_id=incoming.thread_id,
                     content="Usage: /delete <thread_id>",
                     author="ThreadBot",
@@ -79,14 +79,14 @@ def run_func(app):
                 continue
 
             app.delete_thread(thread_id)
-            app.send(
+            app.add_message(
                 thread_id=incoming.thread_id,
                 content=f"Deleted thread: {thread_id}",
                 author="ThreadBot",
             )
             continue
 
-        app.send(
+        app.add_message(
             thread_id=incoming.thread_id,
             content=(
                 f"Thread: {incoming.thread_id}\n"

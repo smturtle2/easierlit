@@ -2,7 +2,7 @@
 
 # Easierlit
 
-[![Version](https://img.shields.io/badge/version-0.3.1-2563eb)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.4.0-2563eb)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-0ea5e9)](pyproject.toml)
 [![Chainlit](https://img.shields.io/badge/chainlit-2.9%20to%203-10b981)](https://docs.chainlit.io)
 
@@ -74,7 +74,7 @@ def run_func(app):
         except AppClosedError:
             break
 
-        app.send(
+        app.add_message(
             thread_id=incoming.thread_id,
             content=f"Echo: {incoming.content}",
             author="EchoBot",
@@ -99,7 +99,7 @@ async def run_func(app):
         except AppClosedError:
             break
 
-        app.send(
+        app.add_message(
             thread_id=incoming.thread_id,
             content=f"Echo: {incoming.content}",
             author="EchoBot",
@@ -114,7 +114,7 @@ server = EasierlitServer(client=client)
 server.serve()
 ```
 
-## 공개 API (v0.3.1)
+## 공개 API (v0.4.0)
 
 ```python
 EasierlitServer(
@@ -130,12 +130,16 @@ EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
-EasierlitApp.send(thread_id, content, author="Assistant", metadata=None) -> str
-EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str  # deprecated alias
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
+EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
+EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name은 "Reasoning" 고정
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
+EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None)
+EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # tool_name은 "Reasoning" 고정
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
+EasierlitApp.get_history(thread_id) -> dict
 EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
@@ -173,22 +177,29 @@ Easierlit에서 일반적인 구성:
 
 Message API:
 
-- `app.send(...)`
-- `app.add_message(...)` (`send(...)`의 deprecated alias)
+- `app.add_message(...)`
+- `app.add_tool(...)`
+- `app.add_thought(...)`
 - `app.update_message(...)`
+- `app.update_tool(...)`
+- `app.update_thought(...)`
 - `app.delete_message(...)`
 
 Thread API:
 
 - `app.list_threads(...)`
 - `app.get_thread(thread_id)`
+- `app.get_history(thread_id)`
 - `app.new_thread(...)`
 - `app.update_thread(...)`
 - `app.delete_thread(thread_id)`
 
 동작 핵심:
 
-- `app.send(...)`는 생성된 `message_id`를 반환
+- `app.add_message(...)`는 생성된 `message_id`를 반환
+- `app.add_tool(...)`은 도구 호출 step을 생성하며 도구명은 step author/name으로 표시됩니다.
+- `app.add_thought(...)`는 동일한 도구 호출 경로를 사용하고 도구명은 `Reasoning`으로 고정됩니다.
+- `app.get_history(...)`은 thread 메타데이터와 순서 보존 `items` 단일 목록을 반환합니다.
 - `app.new_thread(...)`는 고유한 `thread_id`를 자동 생성하고 반환
 - `app.update_thread(...)`는 기존 thread만 수정
 - auth 설정 시 `app.new_thread(...)`/`app.update_thread(...)` 모두 소유자를 자동 귀속
@@ -217,8 +228,12 @@ Tool/run 계열:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.3.1 공개 API는 메시지 중심이며,
-전용 tool-call step 생성 API는 아직 제공하지 않습니다.
+Easierlit v0.4.0 매핑:
+
+- `app.add_message(...)` -> `assistant_message`
+- `app.add_tool(...)` / `app.update_tool(...)` -> `tool`
+- `app.add_thought(...)` / `app.update_thought(...)` -> `tool` (`Reasoning` 고정)
+- `app.delete_message(...)`는 `message_id` 기준으로 message/tool/thought를 공통 삭제
 
 ## 예제 맵
 
@@ -226,6 +241,7 @@ Easierlit v0.3.1 공개 API는 메시지 중심이며,
 - `examples/custom_auth.py`: 단일 계정 인증
 - `examples/thread_crud.py`: thread list/get/update/delete
 - `examples/thread_create_in_run_func.py`: `run_func`에서 thread 생성
+- `examples/step_types.py`: tool/thought step 생성/수정/삭제 예제
 
 ## 문서 맵
 
@@ -236,8 +252,9 @@ Easierlit v0.3.1 공개 API는 메시지 중심이며,
 
 ## 마이그레이션 노트
 
-v0.3.1 API 변경:
+v0.4.0 API 변경:
 
 - `new_thread(thread_id=..., ...)` -> `thread_id = new_thread(...)`
-- 메시지 전송 표준 API는 `send(...)`이며 `message_id`를 반환
-- `add_message(...)`는 `send(...)`의 deprecated alias로 계속 지원(런타임 경고 없음)
+- `send(...)` 제거
+- 메시지 표준 API를 `add_message(...)`로 전환
+- 도구/추론 API 추가: `add_tool(...)`, `add_thought(...)`, `update_tool(...)`, `update_thought(...)`

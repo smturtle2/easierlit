@@ -33,6 +33,7 @@ def test_default_sqlite_data_layer_is_registered_when_no_external_db(monkeypatch
 
     assert config.code.data_layer is not None
     assert db_path.exists()
+    assert config.ui.cot == "full"
 
     runtime.unbind()
     _clear_chainlit_hooks()
@@ -56,6 +57,7 @@ def test_default_sqlite_is_not_registered_when_database_url_exists(monkeypatch):
     assert _should_register_default_data_layer() is False
     _apply_runtime_configuration()
     assert config.code.data_layer is None
+    assert config.ui.cot == "full"
 
     runtime.unbind()
     _clear_chainlit_hooks()

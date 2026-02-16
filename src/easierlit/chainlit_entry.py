@@ -50,6 +50,7 @@ def _apply_runtime_configuration() -> None:
 
     # Easierlit policy.
     config.ui.default_sidebar_state = "open"
+    config.ui.cot = "full"
     _CONFIG_APPLIED = True
 
 

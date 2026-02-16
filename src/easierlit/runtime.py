@@ -206,10 +206,11 @@ class RuntimeRegistry:
     ) -> None:
         from chainlit.context import init_ws_context
         from chainlit.message import Message
+        from chainlit.step import Step
 
         init_ws_context(session)
 
-        if command.command == "send":
+        if command.command == "add_message":
             message = Message(
                 id=command.message_id,
                 content=command.content or "",
@@ -219,7 +220,7 @@ class RuntimeRegistry:
             await message.send()
             return
 
-        if command.command == "update":
+        if command.command == "update_message":
             if not command.message_id:
                 raise ValueError("Update command requires message_id.")
             message = Message(
@@ -231,16 +232,48 @@ class RuntimeRegistry:
             await message.update()
             return
 
+        if command.command == "add_tool":
+            if not command.message_id:
+                raise ValueError("Add tool command requires message_id.")
+            step = Step(
+                id=command.message_id,
+                thread_id=command.thread_id,
+                name=command.author,
+                type="tool",
+                metadata=command.metadata,
+            )
+            step.output = command.content or ""
+            await step.send()
+            return
+
+        if command.command == "update_tool":
+            if not command.message_id:
+                raise ValueError("Update tool command requires message_id.")
+            step = Step(
+                id=command.message_id,
+                thread_id=command.thread_id,
+                name=command.author,
+                type="tool",
+                metadata=command.metadata,
+            )
+            step.output = command.content or ""
+            await step.update()
+            return
+
         if command.command == "delete":
             if not command.message_id:
                 raise ValueError("Delete command requires message_id.")
-            message = Message(
+            step = Step(
                 id=command.message_id,
-                content="",
-                author=command.author,
+                thread_id=command.thread_id,
+                name=command.author,
+                type="undefined",
                 metadata=command.metadata,
             )
-            await message.remove()
+            await step.remove()
+            return
+
+        raise ValueError(f"Unsupported command: {command.command}")
 
     async def _apply_data_layer_command(self, command: OutgoingCommand) -> None:
         data_layer = get_data_layer()
@@ -261,11 +294,12 @@ class RuntimeRegistry:
             raise ValueError(f"{command.command} command requires message_id.")
 
         timestamp = utc_now()
+        is_tool_command = command.command in ("add_tool", "update_tool")
         step_dict = {
             "id": command.message_id,
             "threadId": command.thread_id,
             "name": command.author,
-            "type": "assistant_message",
+            "type": "tool" if is_tool_command else "assistant_message",
             "output": command.content or "",
             "createdAt": timestamp,
             "start": timestamp,
@@ -276,13 +310,15 @@ class RuntimeRegistry:
             "metadata": command.metadata,
         }
 
-        if command.command == "send":
+        if command.command in ("add_message", "add_tool"):
             await data_layer.create_step(step_dict)
             return
 
-        if command.command == "update":
+        if command.command in ("update_message", "update_tool"):
             await data_layer.update_step(step_dict)
             return
+
+        raise ValueError(f"Unsupported command: {command.command}")
 
     def _init_data_layer_http_context(self, thread_id: str) -> None:
         init_http_context(thread_id=thread_id, client_type="webapp")

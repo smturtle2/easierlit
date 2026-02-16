@@ -16,7 +16,14 @@ class IncomingMessage(BaseModel):
 
 
 class OutgoingCommand(BaseModel):
-    command: Literal["send", "update", "delete", "close"]
+    command: Literal[
+        "add_message",
+        "add_tool",
+        "update_message",
+        "update_tool",
+        "delete",
+        "close",
+    ]
     thread_id: str | None = None
     message_id: str | None = None
     content: str | None = None

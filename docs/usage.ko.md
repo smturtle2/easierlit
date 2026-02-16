@@ -1,6 +1,6 @@
-# Easierlit 사용 가이드 (v0.3.1)
+# Easierlit 사용 가이드 (v0.4.0)
 
-이 문서는 Easierlit v0.3.1의 상세 사용 레퍼런스입니다.
+이 문서는 Easierlit v0.4.0의 상세 사용 레퍼런스입니다.
 메서드 단위의 정확한 계약(시그니처/예외/실패모드)은 아래 API 레퍼런스를 우선 참고하세요.
 
 - `docs/api-reference.en.md`
@@ -8,7 +8,7 @@
 
 ## 1. 범위와 버전
 
-- 대상 버전: `0.3.1`
+- 대상 버전: `0.4.0`
 - 런타임 코어: Chainlit (`chainlit>=2.9,<3`)
 - 현재 공개 API 기준만 다룹니다.
 
@@ -42,7 +42,7 @@ def run_func(app):
         except AppClosedError:
             break
 
-        app.send(
+        app.add_message(
             thread_id=incoming.thread_id,
             content=f"Echo: {incoming.content}",
             author="EchoBot",
@@ -78,12 +78,16 @@ EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
-EasierlitApp.send(thread_id, content, author="Assistant", metadata=None) -> str
-EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str  # deprecated alias
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
+EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
+EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name은 "Reasoning" 고정
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
+EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None)
+EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # tool_name은 "Reasoning" 고정
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
+EasierlitApp.get_history(thread_id) -> dict
 EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
@@ -99,6 +103,7 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 
 - Chainlit headless 모드 활성
 - sidebar 기본 상태 `open`
+- CoT 모드 `full` 강제
 - `CHAINLIT_AUTH_COOKIE_NAME=easierlit_access_token`
 - JWT secret 자동 관리(`.chainlit/jwt.secret`)
 - `run_func` fail-fast: 워커 예외 시 서버 종료 트리거
@@ -160,6 +165,7 @@ Thread History 표시 조건(Chainlit 정책):
 
 - `list_threads(first=20, cursor=None, search=None, user_identifier=None)`
 - `get_thread(thread_id)`
+- `get_history(thread_id) -> dict`
 - `new_thread(name=None, metadata=None, tags=None) -> str`
 - `update_thread(thread_id, name=None, metadata=None, tags=None)`
 - `delete_thread(thread_id)`
@@ -169,6 +175,7 @@ Thread History 표시 조건(Chainlit 정책):
 - Thread CRUD는 data layer가 필요합니다.
 - `new_thread`는 고유한 thread id를 자동 생성하고 반환합니다.
 - `update_thread`는 대상 thread가 이미 있을 때만 수정합니다.
+- `get_history`은 thread 메타데이터와 `thread["steps"]` 순서 보존 `items` 단일 목록을 반환합니다.
 - auth 설정 시 `new_thread`/`update_thread` 모두 소유자 user를 자동 조회/생성 후 `user_id`로 저장합니다.
 - SQLite SQLAlchemyDataLayer에서는 `tags` list를 저장 시 JSON 직렬화하고 조회 시 list로 정규화합니다.
 
@@ -176,7 +183,8 @@ Thread History 표시 조건(Chainlit 정책):
 
 메시지 메서드:
 
-- `app.send(...)`, `app.add_message(...)`(deprecated alias), `app.update_message(...)`, `app.delete_message(...)`
+- `app.add_message(...)`, `app.update_message(...)`, `app.delete_message(...)`
+- `app.add_tool(...)`, `app.add_thought(...)`, `app.update_tool(...)`, `app.update_thought(...)`
 
 실행 모델:
 
@@ -193,7 +201,7 @@ Thread History 표시 조건(Chainlit 정책):
 
 1. `thread_id = app.new_thread(...)` 호출
 2. 반환된 `thread_id`로 후속 메시지 대상 지정
-3. `app.send(...)`로 bootstrap assistant message 저장
+3. `app.add_message(...)`로 bootstrap assistant message 저장
 4. 현재 thread로 생성 결과를 안내
 
 auth 설정 시 생성 thread는 auth 사용자 소유자로 자동 귀속됩니다.
@@ -212,12 +220,13 @@ Chainlit은 step type으로 메시지와 도구/실행을 구분합니다.
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.3.1 매핑:
+Easierlit v0.4.0 매핑:
 
 - `app.recv()` 입력은 사용자 메시지 흐름
 - `app.arecv()` 입력도 동일한 사용자 메시지 흐름 계약을 따름
-- `app.send()` 출력은 assistant 메시지 흐름(`app.add_message()`는 deprecated alias)
-- Easierlit 공개 API에는 전용 tool-call step 생성 API가 없습니다
+- `app.add_message()` 출력은 assistant 메시지 흐름
+- `app.add_tool()/app.update_tool()` 출력은 tool-call 흐름이며 step name=`tool_name`
+- `app.add_thought()/app.update_thought()` 출력은 tool-call 흐름이며 step name=`Reasoning` 고정
 
 UI 옵션 참고(Chainlit): `ui.cot`는 `full`, `tool_call`, `hidden`을 지원합니다.
 
@@ -249,8 +258,9 @@ SQLite `tags` 바인딩 이슈:
 - `examples/custom_auth.py`
 - `examples/thread_crud.py`
 - `examples/thread_create_in_run_func.py`
+- `examples/step_types.py`
 
-## 14. 릴리스 체크리스트 (v0.3.1)
+## 14. 릴리스 체크리스트 (v0.4.0)
 
 ```bash
 python3 -m py_compile examples/*.py
@@ -261,5 +271,5 @@ python3 -m twine check dist/*
 
 추가 확인:
 
-- `pyproject.toml` version이 `0.3.1`
+- `pyproject.toml` version이 `0.4.0`
 - 문서 링크 정상(`README.md`, `README.ko.md`, `docs/usage.en.md`, `docs/usage.ko.md`, `docs/api-reference.en.md`, `docs/api-reference.ko.md`)

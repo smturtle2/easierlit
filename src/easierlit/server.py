@@ -79,9 +79,10 @@ class EasierlitServer:
         os.environ["CHAINLIT_AUTH_COOKIE_NAME"] = "easierlit_access_token"
         os.environ["CHAINLIT_AUTH_SECRET"] = ensure_jwt_secret()
 
-        # Easierlit policy: always run headless, always keep sidebar open by default.
+        # Easierlit policy: always run headless, always keep sidebar open, and show full CoT.
         config.run.headless = True
         config.ui.default_sidebar_state = "open"
+        config.ui.cot = "full"
 
         entrypoint = self._entrypoint_path()
 

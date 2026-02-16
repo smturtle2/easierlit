@@ -29,7 +29,7 @@ def run_func(app: EasierlitApp):
 
         try:
             if text == "/help":
-                app.send(
+                app.add_message(
                     thread_id=incoming.thread_id,
                     content=help_text,
                     author="ThreadCreator",
@@ -50,7 +50,7 @@ def run_func(app: EasierlitApp):
                     },
                     tags=["run-func-created"],
                 )
-                app.send(
+                app.add_message(
                     thread_id=thread_id,
                     content=(
                         "This thread was created inside run_func.\n"
@@ -60,7 +60,7 @@ def run_func(app: EasierlitApp):
                     metadata={"kind": "thread-bootstrap"},
                 )
 
-                app.send(
+                app.add_message(
                     thread_id=incoming.thread_id,
                     content=(
                         f"Created new thread.\n"
@@ -76,7 +76,7 @@ def run_func(app: EasierlitApp):
             if text.startswith("/get "):
                 target_id = text[len("/get ") :].strip()
                 if not target_id:
-                    app.send(
+                    app.add_message(
                         thread_id=incoming.thread_id,
                         content="Usage: /get <thread_id>",
                         author="ThreadCreator",
@@ -86,14 +86,14 @@ def run_func(app: EasierlitApp):
                 try:
                     thread = app.get_thread(target_id)
                 except ValueError:
-                    app.send(
+                    app.add_message(
                         thread_id=incoming.thread_id,
                         content=f"Thread not found: {target_id}",
                         author="ThreadCreator",
                     )
                     continue
 
-                app.send(
+                app.add_message(
                     thread_id=incoming.thread_id,
                     content=(
                         f"Thread lookup result\n"
@@ -107,7 +107,7 @@ def run_func(app: EasierlitApp):
                 )
                 continue
 
-            app.send(
+            app.add_message(
                 thread_id=incoming.thread_id,
                 content=(
                     f"Echo: {incoming.content}\n\nType /help for commands."

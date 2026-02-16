@@ -22,6 +22,7 @@ def test_serve_forces_headless_and_sidebar(monkeypatch):
         called["target"] = target
         assert config.run.headless is True
         assert config.ui.default_sidebar_state == "open"
+        assert config.ui.cot == "full"
 
         runtime = get_runtime()
         assert runtime.get_auth() is not None

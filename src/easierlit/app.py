@@ -24,6 +24,8 @@ class EasierlitApp:
     surface for worker message and thread CRUD operations.
     """
 
+    _THOUGHT_TOOL_NAME = "Reasoning"
+
     def __init__(self):
         self._incoming_queue: queue.Queue[IncomingMessage | None] = queue.Queue()
         self._outgoing_queue: queue.Queue[OutgoingCommand] = queue.Queue()
@@ -50,7 +52,7 @@ class EasierlitApp:
     async def arecv(self, timeout: float | None = None) -> IncomingMessage:
         return await asyncio.to_thread(self.recv, timeout)
 
-    def send(
+    def add_message(
         self,
         thread_id: str,
         content: str,
@@ -61,7 +63,7 @@ class EasierlitApp:
         message_id = str(uuid4())
         self._put_outgoing(
             OutgoingCommand(
-                command="send",
+                command="add_message",
                 thread_id=thread_id,
                 message_id=message_id,
                 content=content,
@@ -71,18 +73,38 @@ class EasierlitApp:
         )
         return message_id
 
-    def add_message(
+    def add_tool(
+        self,
+        thread_id: str,
+        tool_name: str,
+        content: str,
+        metadata: dict | None = None,
+    ) -> str:
+        """Enqueue a tool-call step and return the generated message id."""
+        message_id = str(uuid4())
+        self._put_outgoing(
+            OutgoingCommand(
+                command="add_tool",
+                thread_id=thread_id,
+                message_id=message_id,
+                content=content,
+                author=tool_name,
+                metadata=metadata or {},
+            )
+        )
+        return message_id
+
+    def add_thought(
         self,
         thread_id: str,
         content: str,
-        author: str = "Assistant",
         metadata: dict | None = None,
     ) -> str:
-        """Deprecated alias of send(). Prefer send() for new code."""
-        return self.send(
+        """Enqueue a reasoning step as a tool-call step."""
+        return self.add_tool(
             thread_id=thread_id,
+            tool_name=self._THOUGHT_TOOL_NAME,
             content=content,
-            author=author,
             metadata=metadata,
         )
 
@@ -95,12 +117,46 @@ class EasierlitApp:
     ) -> None:
         self._put_outgoing(
             OutgoingCommand(
-                command="update",
+                command="update_message",
                 thread_id=thread_id,
                 message_id=message_id,
                 content=content,
                 metadata=metadata or {},
             )
+        )
+
+    def update_tool(
+        self,
+        thread_id: str,
+        message_id: str,
+        tool_name: str,
+        content: str,
+        metadata: dict | None = None,
+    ) -> None:
+        self._put_outgoing(
+            OutgoingCommand(
+                command="update_tool",
+                thread_id=thread_id,
+                message_id=message_id,
+                content=content,
+                author=tool_name,
+                metadata=metadata or {},
+            )
+        )
+
+    def update_thought(
+        self,
+        thread_id: str,
+        message_id: str,
+        content: str,
+        metadata: dict | None = None,
+    ) -> None:
+        self.update_tool(
+            thread_id=thread_id,
+            message_id=message_id,
+            tool_name=self._THOUGHT_TOOL_NAME,
+            content=content,
+            metadata=metadata,
         )
 
     def delete_message(self, thread_id: str, message_id: str) -> None:
@@ -146,6 +202,43 @@ class EasierlitApp:
             return self._normalize_thread_tags(thread)
 
         return self._runtime.run_coroutine_sync(_get_thread())
+
+    def get_history(self, thread_id: str) -> dict:
+        """
+        Return thread metadata and one ordered history list.
+
+        `items` preserves the original order in `thread["steps"]` and includes
+        both message steps and non-message steps.
+        """
+        thread = self.get_thread(thread_id)
+
+        raw_steps = thread.get("steps")
+        step_items = raw_steps if isinstance(raw_steps, list) else []
+        items = [item for item in step_items if isinstance(item, dict)]
+
+        thread_metadata = dict(thread)
+        thread_metadata.pop("steps", None)
+
+        return {
+            "thread": thread_metadata,
+            "items": items,
+        }
+
+    def timeline(self, thread_id: str) -> dict:
+        """Backward-compatible alias for `get_history`."""
+        return self.get_history(thread_id)
+
+    def get_thread_timeline(self, thread_id: str) -> dict:
+        """Backward-compatible alias for `get_history`."""
+        return self.get_history(thread_id)
+
+    def get_thread_messages_and_steps(self, thread_id: str) -> dict:
+        """Backward-compatible alias for `get_history`."""
+        return self.get_history(thread_id)
+
+    def get_timeline(self, thread_id: str) -> dict:
+        """Backward-compatible alias for `get_history`."""
+        return self.get_history(thread_id)
 
     def update_thread(
         self,

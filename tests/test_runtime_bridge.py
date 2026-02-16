@@ -39,12 +39,12 @@ def test_dispatcher_consumes_outgoing_queue(monkeypatch):
         monkeypatch.setattr(runtime, "apply_outgoing_command", fake_apply)
 
         await runtime.start_dispatcher()
-        app.send(thread_id="thread-1", content="hello")
+        app.add_message(thread_id="thread-1", content="hello")
         await asyncio.sleep(0.3)
         await runtime.stop_dispatcher()
 
         assert len(seen) >= 1
-        assert seen[0].command == "send"
+        assert seen[0].command == "add_message"
         assert seen[0].thread_id == "thread-1"
 
     asyncio.run(scenario())

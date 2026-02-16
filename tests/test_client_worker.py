@@ -8,12 +8,12 @@ from easierlit import EasierlitApp, EasierlitClient, IncomingMessage, RunFuncExe
 
 def _single_message_worker(app: EasierlitApp) -> None:
     incoming = app.recv(timeout=2.0)
-    app.send(incoming.thread_id, incoming.content.upper(), author="Worker")
+    app.add_message(incoming.thread_id, incoming.content.upper(), author="Worker")
 
 
 async def _single_message_async_worker(app: EasierlitApp) -> None:
     incoming = await app.arecv(timeout=2.0)
-    app.send(incoming.thread_id, incoming.content.upper(), author="Worker")
+    app.add_message(incoming.thread_id, incoming.content.upper(), author="Worker")
 
 
 def _crashing_worker(_app: EasierlitApp) -> None:
@@ -50,7 +50,7 @@ def test_thread_worker_run_and_stop():
     )
 
     command = app._pop_outgoing(timeout=3.0)
-    assert command.command == "send"
+    assert command.command == "add_message"
     assert command.content == "HELLO"
 
     client.stop()
@@ -72,7 +72,7 @@ def test_thread_async_worker_auto_mode_run_and_stop():
     )
 
     command = app._pop_outgoing(timeout=3.0)
-    assert command.command == "send"
+    assert command.command == "add_message"
     assert command.content == "HEY"
 
     client.stop()
@@ -159,4 +159,3 @@ def test_thread_worker_records_error_and_invokes_crash_handler():
 
     with pytest.raises(RunFuncExecutionError):
         client.stop()
-

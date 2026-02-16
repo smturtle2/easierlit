@@ -205,6 +205,52 @@ def test_thread_crud_with_data_layer(monkeypatch):
     assert fake.deleted_threads == ["thread-1"]
 
 
+def test_history_preserves_original_step_order(monkeypatch):
+    class _FakeDataLayerWithSteps(FakeDataLayer):
+        async def get_thread(self, thread_id: str):
+            self.requested_threads.append(thread_id)
+            if thread_id != "thread-1":
+                return None
+            return {
+                "id": thread_id,
+                "name": "Thread 1",
+                "tags": ["existing-tag"],
+                "steps": [
+                    {"id": "msg-1", "type": "user_message", "output": "hello"},
+                    {"id": "msg-2", "type": "assistant_message", "output": "hi"},
+                    {"id": "tool-1", "type": "tool", "output": '{"hits":2}'},
+                    {"id": "run-1", "type": "run", "output": "done"},
+                    "invalid-entry",
+                ],
+            }
+
+    fake = _FakeDataLayerWithSteps()
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
+
+    app = EasierlitApp()
+    history = app.get_history("thread-1")
+
+    assert history["thread"]["id"] == "thread-1"
+    assert "steps" not in history["thread"]
+    assert [item["id"] for item in history["items"]] == [
+        "msg-1",
+        "msg-2",
+        "tool-1",
+        "run-1",
+    ]
+
+
+def test_history_handles_missing_steps_key(monkeypatch):
+    fake = FakeDataLayer()
+    monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
+
+    app = EasierlitApp()
+    history = app.get_history("thread-1")
+
+    assert history["thread"]["id"] == "thread-1"
+    assert history["items"] == []
+
+
 def test_new_thread_creates_when_missing(monkeypatch):
     fake = FakeDataLayer()
     monkeypatch.setattr("easierlit.app.get_data_layer", lambda: fake)
@@ -359,10 +405,13 @@ def test_message_crud_falls_back_to_data_layer_when_no_session(monkeypatch):
     message_id = app.add_message("thread-1", "hello", author="Bot")
     _apply_next_outgoing_command(app)
     assert fake.created_steps[0]["id"] == message_id
+    assert fake.created_steps[0]["type"] == "assistant_message"
+    assert fake.created_steps[0]["name"] == "Bot"
 
     app.update_message("thread-1", message_id, "updated")
     _apply_next_outgoing_command(app)
     assert fake.updated_steps[0]["id"] == message_id
+    assert fake.updated_steps[0]["type"] == "assistant_message"
 
     app.delete_message("thread-1", message_id)
     _apply_next_outgoing_command(app)
@@ -406,5 +455,60 @@ def test_message_crud_fallback_works_with_queue_decorated_data_layer(monkeypatch
     assert len(context_calls) == 3
     assert context_calls[0] == ("thread-queue", "webapp")
     assert fake.created_steps[0]["id"] == message_id
+    assert fake.created_steps[0]["type"] == "assistant_message"
     assert fake.updated_steps[0]["id"] == message_id
+    assert fake.updated_steps[0]["type"] == "assistant_message"
     assert fake.deleted_steps == [message_id]
+
+
+def test_tool_and_thought_crud_falls_back_to_data_layer_when_no_session(monkeypatch):
+    fake = FakeDataLayer()
+    monkeypatch.setattr("easierlit.runtime.get_data_layer", lambda: fake)
+
+    app = EasierlitApp()
+
+    tool_message_id = app.add_tool(
+        thread_id="thread-1",
+        tool_name="SearchTool",
+        content='{"query":"books"}',
+    )
+    _apply_next_outgoing_command(app)
+    assert fake.created_steps[0]["id"] == tool_message_id
+    assert fake.created_steps[0]["type"] == "tool"
+    assert fake.created_steps[0]["name"] == "SearchTool"
+
+    app.update_tool(
+        thread_id="thread-1",
+        message_id=tool_message_id,
+        tool_name="SearchTool",
+        content='{"results":2}',
+    )
+    _apply_next_outgoing_command(app)
+    assert fake.updated_steps[0]["id"] == tool_message_id
+    assert fake.updated_steps[0]["type"] == "tool"
+    assert fake.updated_steps[0]["name"] == "SearchTool"
+
+    thought_message_id = app.add_thought(
+        thread_id="thread-1",
+        content="Need one more retrieval pass.",
+    )
+    _apply_next_outgoing_command(app)
+    assert fake.created_steps[1]["id"] == thought_message_id
+    assert fake.created_steps[1]["type"] == "tool"
+    assert fake.created_steps[1]["name"] == "Reasoning"
+
+    app.update_thought(
+        thread_id="thread-1",
+        message_id=thought_message_id,
+        content="Enough context collected.",
+    )
+    _apply_next_outgoing_command(app)
+    assert fake.updated_steps[1]["id"] == thought_message_id
+    assert fake.updated_steps[1]["type"] == "tool"
+    assert fake.updated_steps[1]["name"] == "Reasoning"
+
+    app.delete_message("thread-1", tool_message_id)
+    _apply_next_outgoing_command(app)
+    app.delete_message("thread-1", thought_message_id)
+    _apply_next_outgoing_command(app)
+    assert fake.deleted_steps == [tool_message_id, thought_message_id]

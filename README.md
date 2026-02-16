@@ -2,7 +2,7 @@
 
 # Easierlit
 
-[![Version](https://img.shields.io/badge/version-0.3.1-2563eb)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.4.0-2563eb)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-0ea5e9)](pyproject.toml)
 [![Chainlit](https://img.shields.io/badge/chainlit-2.9%20to%203-10b981)](https://docs.chainlit.io)
 
@@ -74,7 +74,7 @@ def run_func(app):
         except AppClosedError:
             break
 
-        app.send(
+        app.add_message(
             thread_id=incoming.thread_id,
             content=f"Echo: {incoming.content}",
             author="EchoBot",
@@ -99,7 +99,7 @@ async def run_func(app):
         except AppClosedError:
             break
 
-        app.send(
+        app.add_message(
             thread_id=incoming.thread_id,
             content=f"Echo: {incoming.content}",
             author="EchoBot",
@@ -114,7 +114,7 @@ server = EasierlitServer(client=client)
 server.serve()
 ```
 
-## Public API (v0.3.1)
+## Public API (v0.4.0)
 
 ```python
 EasierlitServer(
@@ -130,12 +130,16 @@ EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
-EasierlitApp.send(thread_id, content, author="Assistant", metadata=None) -> str
-EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str  # deprecated alias
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
+EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
+EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name is fixed to "Reasoning"
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
+EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None)
+EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # tool_name is fixed to "Reasoning"
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
+EasierlitApp.get_history(thread_id) -> dict
 EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
@@ -173,22 +177,29 @@ Typical Easierlit setup:
 
 Message APIs:
 
-- `app.send(...)`
-- `app.add_message(...)` (deprecated alias of `send(...)`)
+- `app.add_message(...)`
+- `app.add_tool(...)`
+- `app.add_thought(...)`
 - `app.update_message(...)`
+- `app.update_tool(...)`
+- `app.update_thought(...)`
 - `app.delete_message(...)`
 
 Thread APIs:
 
 - `app.list_threads(...)`
 - `app.get_thread(thread_id)`
+- `app.get_history(thread_id)`
 - `app.new_thread(...)`
 - `app.update_thread(...)`
 - `app.delete_thread(thread_id)`
 
 Behavior highlights:
 
-- `app.send(...)` returns generated `message_id`.
+- `app.add_message(...)` returns generated `message_id`.
+- `app.add_tool(...)` stores tool-call steps with tool name shown as step author/name.
+- `app.add_thought(...)` is the same tool-call path with fixed tool name `Reasoning`.
+- `app.get_history(...)` returns thread metadata plus one ordered `items` list.
 - `app.new_thread(...)` auto-generates a unique `thread_id` and returns it.
 - `app.update_thread(...)` updates only when thread already exists.
 - With auth enabled, both `app.new_thread(...)` and `app.update_thread(...)` auto-assign thread ownership.
@@ -217,8 +228,12 @@ Tool/run family includes:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.3.1 currently provides message-centric public APIs.
-A dedicated tool-call step creation public API is not provided yet.
+Easierlit v0.4.0 mapping:
+
+- `app.add_message(...)` -> `assistant_message`
+- `app.add_tool(...)` / `app.update_tool(...)` -> `tool`
+- `app.add_thought(...)` / `app.update_thought(...)` -> `tool` (name fixed to `Reasoning`)
+- `app.delete_message(...)` deletes by `message_id` regardless of message/tool/thought source.
 
 ## Example Map
 
@@ -226,6 +241,7 @@ A dedicated tool-call step creation public API is not provided yet.
 - `examples/custom_auth.py`: single-account auth
 - `examples/thread_crud.py`: thread list/get/update/delete
 - `examples/thread_create_in_run_func.py`: create thread from `run_func`
+- `examples/step_types.py`: tool/thought step creation, update, delete example
 
 ## Documentation Map
 
@@ -236,8 +252,9 @@ A dedicated tool-call step creation public API is not provided yet.
 
 ## Migration Note
 
-v0.3.1 API updates:
+v0.4.0 API updates:
 
 - `new_thread(thread_id=..., ...)` -> `thread_id = new_thread(...)`
-- `send(...)` is the canonical message API and returns `message_id`.
-- `add_message(...)` remains supported as a deprecated alias of `send(...)` (no runtime warning).
+- `send(...)` was removed.
+- `add_message(...)` is now the canonical message API.
+- Added tool/thought APIs: `add_tool(...)`, `add_thought(...)`, `update_tool(...)`, `update_thought(...)`.

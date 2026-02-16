@@ -1,6 +1,6 @@
-# Easierlit Usage Guide (v0.3.1)
+# Easierlit Usage Guide (v0.4.0)
 
-This document is the detailed usage reference for Easierlit v0.3.1.
+This document is the detailed usage reference for Easierlit v0.4.0.
 For exact method-level contracts (signature, raises, failure modes), see:
 
 - `docs/api-reference.en.md`
@@ -8,7 +8,7 @@ For exact method-level contracts (signature, raises, failure modes), see:
 
 ## 1. Scope and Version
 
-- Version target: `0.3.1`
+- Version target: `0.4.0`
 - Runtime core: Chainlit (`chainlit>=2.9,<3`)
 - This guide covers current public APIs only.
 
@@ -42,7 +42,7 @@ def run_func(app):
         except AppClosedError:
             break
 
-        app.send(
+        app.add_message(
             thread_id=incoming.thread_id,
             content=f"Echo: {incoming.content}",
             author="EchoBot",
@@ -78,12 +78,16 @@ EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
-EasierlitApp.send(thread_id, content, author="Assistant", metadata=None) -> str
-EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str  # deprecated alias
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
+EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
+EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name is fixed to "Reasoning"
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
+EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None)
+EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # tool_name is fixed to "Reasoning"
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
+EasierlitApp.get_history(thread_id) -> dict
 EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
@@ -99,6 +103,7 @@ Easierlit server enforces these defaults:
 
 - Chainlit headless mode enabled.
 - Sidebar default state forced to `open`.
+- CoT mode forced to `full`.
 - `CHAINLIT_AUTH_COOKIE_NAME=easierlit_access_token`.
 - JWT secret auto-managed in `.chainlit/jwt.secret`.
 - `run_func` fail-fast: worker exception triggers server shutdown.
@@ -160,6 +165,7 @@ Available methods on `EasierlitApp`:
 
 - `list_threads(first=20, cursor=None, search=None, user_identifier=None)`
 - `get_thread(thread_id)`
+- `get_history(thread_id) -> dict`
 - `new_thread(name=None, metadata=None, tags=None) -> str`
 - `update_thread(thread_id, name=None, metadata=None, tags=None)`
 - `delete_thread(thread_id)`
@@ -169,6 +175,7 @@ Behavior details:
 - Data layer is required for thread CRUD.
 - `new_thread` auto-generates a unique thread id and returns it.
 - `update_thread` updates only when target thread already exists.
+- `get_history` returns thread metadata and one ordered `items` list from `thread["steps"]`.
 - If auth is configured, `new_thread` and `update_thread` auto-resolve owner user and save with `user_id`.
 - In SQLite SQLAlchemyDataLayer, `tags` list is JSON-serialized on write and normalized to list on read.
 
@@ -176,7 +183,8 @@ Behavior details:
 
 Message methods:
 
-- `app.send(...)`, `app.add_message(...)` (deprecated alias), `app.update_message(...)`, `app.delete_message(...)`
+- `app.add_message(...)`, `app.update_message(...)`, `app.delete_message(...)`
+- `app.add_tool(...)`, `app.add_thought(...)`, `app.update_tool(...)`, `app.update_thought(...)`
 
 Execution model:
 
@@ -193,7 +201,7 @@ Pattern:
 
 1. Call `thread_id = app.new_thread(...)`.
 2. Use the returned `thread_id` for follow-up messages.
-3. Call `app.send(...)` to add bootstrap assistant message.
+3. Call `app.add_message(...)` to add bootstrap assistant message.
 4. Reply to the current thread with created ID.
 
 With auth enabled, created thread ownership is auto-assigned to the configured user.
@@ -212,12 +220,13 @@ Tool/run family includes:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.3.1 mapping:
+Easierlit v0.4.0 mapping:
 
 - Incoming `app.recv()` data is user-message flow.
 - Incoming `app.arecv()` data follows the same user-message flow contract.
-- Outgoing `app.send()` is assistant-message flow (`app.add_message()` is a deprecated alias).
-- Easierlit does not provide a dedicated public API to create tool-call steps.
+- Outgoing `app.add_message()` is assistant-message flow.
+- Outgoing `app.add_tool()/app.update_tool()` is tool-call flow with step name=`tool_name`.
+- Outgoing `app.add_thought()/app.update_thought()` is tool-call flow with fixed step name=`Reasoning`.
 
 UI option reference (Chainlit): `ui.cot` supports `full`, `tool_call`, `hidden`.
 
@@ -249,8 +258,9 @@ SQLite `tags` binding issues:
 - `examples/custom_auth.py`
 - `examples/thread_crud.py`
 - `examples/thread_create_in_run_func.py`
+- `examples/step_types.py`
 
-## 14. Release Checklist (v0.3.1)
+## 14. Release Checklist (v0.4.0)
 
 ```bash
 python3 -m py_compile examples/*.py
@@ -261,5 +271,5 @@ python3 -m twine check dist/*
 
 Also verify:
 
-- `pyproject.toml` version is `0.3.1`
+- `pyproject.toml` version is `0.4.0`
 - README/doc links resolve (`README.md`, `README.ko.md`, `docs/usage.en.md`, `docs/usage.ko.md`, `docs/api-reference.en.md`, `docs/api-reference.ko.md`)

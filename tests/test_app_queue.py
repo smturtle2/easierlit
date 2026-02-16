@@ -5,7 +5,7 @@ import pytest
 from easierlit import AppClosedError, EasierlitApp, IncomingMessage
 
 
-def test_recv_send_add_update_delete_flow():
+def test_recv_add_update_delete_flow():
     app = EasierlitApp()
 
     incoming = IncomingMessage(
@@ -21,28 +21,70 @@ def test_recv_send_add_update_delete_flow():
     assert received.thread_id == "thread-1"
     assert received.content == "hello"
 
-    sent_message_id = app.send(thread_id="thread-1", content="world", author="Bot")
-    send_cmd = app._pop_outgoing(timeout=1.0)
-    assert send_cmd.command == "send"
-    assert send_cmd.message_id == sent_message_id
-    assert send_cmd.content == "world"
-
-    alias_message_id = app.add_message(thread_id="thread-1", content="added", author="Bot")
+    message_id = app.add_message(thread_id="thread-1", content="world", author="Bot")
     add_cmd = app._pop_outgoing(timeout=1.0)
-    assert add_cmd.command == "send"
-    assert add_cmd.message_id == alias_message_id
-    assert add_cmd.content == "added"
+    assert add_cmd.command == "add_message"
+    assert add_cmd.message_id == message_id
+    assert add_cmd.content == "world"
 
-    app.update_message(thread_id="thread-1", message_id=alias_message_id, content="new")
+    app.update_message(thread_id="thread-1", message_id=message_id, content="new")
     update_cmd = app._pop_outgoing(timeout=1.0)
-    assert update_cmd.command == "update"
-    assert update_cmd.message_id == alias_message_id
+    assert update_cmd.command == "update_message"
+    assert update_cmd.message_id == message_id
     assert update_cmd.content == "new"
 
-    app.delete_message(thread_id="thread-1", message_id=alias_message_id)
+    app.delete_message(thread_id="thread-1", message_id=message_id)
     delete_cmd = app._pop_outgoing(timeout=1.0)
     assert delete_cmd.command == "delete"
-    assert delete_cmd.message_id == alias_message_id
+    assert delete_cmd.message_id == message_id
+
+
+def test_tool_and_thought_enqueue_flow():
+    app = EasierlitApp()
+
+    tool_message_id = app.add_tool(
+        thread_id="thread-1",
+        tool_name="SearchTool",
+        content='{"query":"chainlit"}',
+    )
+    tool_add_cmd = app._pop_outgoing(timeout=1.0)
+    assert tool_add_cmd.command == "add_tool"
+    assert tool_add_cmd.message_id == tool_message_id
+    assert tool_add_cmd.author == "SearchTool"
+    assert tool_add_cmd.content == '{"query":"chainlit"}'
+
+    thought_message_id = app.add_thought(
+        thread_id="thread-1",
+        content="I should call a retrieval tool first.",
+    )
+    thought_add_cmd = app._pop_outgoing(timeout=1.0)
+    assert thought_add_cmd.command == "add_tool"
+    assert thought_add_cmd.message_id == thought_message_id
+    assert thought_add_cmd.author == "Reasoning"
+    assert thought_add_cmd.content == "I should call a retrieval tool first."
+
+    app.update_tool(
+        thread_id="thread-1",
+        message_id=tool_message_id,
+        tool_name="SearchTool",
+        content='{"results":3}',
+    )
+    tool_update_cmd = app._pop_outgoing(timeout=1.0)
+    assert tool_update_cmd.command == "update_tool"
+    assert tool_update_cmd.message_id == tool_message_id
+    assert tool_update_cmd.author == "SearchTool"
+    assert tool_update_cmd.content == '{"results":3}'
+
+    app.update_thought(
+        thread_id="thread-1",
+        message_id=thought_message_id,
+        content="Now I can synthesize the final answer.",
+    )
+    thought_update_cmd = app._pop_outgoing(timeout=1.0)
+    assert thought_update_cmd.command == "update_tool"
+    assert thought_update_cmd.message_id == thought_message_id
+    assert thought_update_cmd.author == "Reasoning"
+    assert thought_update_cmd.content == "Now I can synthesize the final answer."
 
 
 def test_recv_timeout_and_close():

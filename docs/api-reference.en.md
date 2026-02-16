@@ -1,8 +1,8 @@
-# Easierlit API Reference (v0.3.1)
+# Easierlit API Reference (v0.4.0)
 
 ## 1. Scope and Contract Notes
 
-- Version target: `0.3.1`
+- Version target: `0.4.0`
 - Runtime core: Chainlit (`chainlit>=2.9,<3`)
 - This document describes public APIs that are currently supported.
 - `EasierlitClient` is thread-worker only (`worker_mode="thread"`).
@@ -42,6 +42,7 @@ Behavior:
 - Starts worker via `client.run(app)`.
 - Starts Chainlit in headless mode.
 - Forces sidebar default state to `open`.
+- Forces CoT mode to `full`.
 - On shutdown, calls `client.stop()` and unbinds runtime.
 - Uses fail-fast policy on worker crash.
 
@@ -142,24 +143,7 @@ arecv(timeout: float | None = None) -> IncomingMessage
 - Async variant of `recv`.
 - Same timeout/close semantics.
 
-### 4.3 `EasierlitApp.send`
-
-```python
-send(
-    thread_id: str,
-    content: str,
-    author: str = "Assistant",
-    metadata: dict | None = None,
-) -> str
-```
-
-Behavior:
-
-- Enqueues outgoing `send` command.
-- Returns generated `message_id`.
-- Command is later applied by runtime dispatcher.
-
-### 4.4 `EasierlitApp.add_message` (deprecated alias)
+### 4.3 `EasierlitApp.add_message`
 
 ```python
 add_message(
@@ -170,9 +154,39 @@ add_message(
 ) -> str
 ```
 
-- Deprecated alias of `send` with the same queue-based behavior.
+Behavior:
 
-### 4.5 `EasierlitApp.update_message`
+- Enqueues outgoing `add_message` command.
+- Returns generated `message_id`.
+- Command is later applied by runtime dispatcher.
+
+### 4.4 `EasierlitApp.add_tool`
+
+```python
+add_tool(
+    thread_id: str,
+    tool_name: str,
+    content: str,
+    metadata: dict | None = None,
+) -> str
+```
+
+- Enqueues outgoing `add_tool` command.
+- `tool_name` is written to step `name` (`author` display in UI).
+
+### 4.5 `EasierlitApp.add_thought`
+
+```python
+add_thought(
+    thread_id: str,
+    content: str,
+    metadata: dict | None = None,
+) -> str
+```
+
+- Wrapper of `add_tool(...)` with fixed tool name `"Reasoning"`.
+
+### 4.6 `EasierlitApp.update_message`
 
 ```python
 update_message(
@@ -183,9 +197,37 @@ update_message(
 ) -> None
 ```
 
-- Enqueues outgoing `update` command.
+- Enqueues outgoing `update_message` command.
 
-### 4.6 `EasierlitApp.delete_message`
+### 4.7 `EasierlitApp.update_tool`
+
+```python
+update_tool(
+    thread_id: str,
+    message_id: str,
+    tool_name: str,
+    content: str,
+    metadata: dict | None = None,
+) -> None
+```
+
+- Enqueues outgoing `update_tool` command.
+- `tool_name` is written to step `name` (`author` display in UI).
+
+### 4.8 `EasierlitApp.update_thought`
+
+```python
+update_thought(
+    thread_id: str,
+    message_id: str,
+    content: str,
+    metadata: dict | None = None,
+) -> None
+```
+
+- Wrapper of `update_tool(...)` with fixed tool name `"Reasoning"`.
+
+### 4.9 `EasierlitApp.delete_message`
 
 ```python
 delete_message(thread_id: str, message_id: str) -> None
@@ -200,7 +242,7 @@ Message-command execution model:
 3. If session is missing and data layer exists, fallback applies via data layer with internal HTTP context.
 4. If both are missing, command application raises `ThreadSessionNotActiveError`.
 
-### 4.7 `EasierlitApp.list_threads`
+### 4.10 `EasierlitApp.list_threads`
 
 ```python
 list_threads(
@@ -222,7 +264,7 @@ Raises:
 - `DataPersistenceNotEnabledError` when no data layer is configured.
 - `ValueError` when `user_identifier` is not found.
 
-### 4.8 `EasierlitApp.get_thread`
+### 4.11 `EasierlitApp.get_thread`
 
 ```python
 get_thread(thread_id: str) -> dict
@@ -232,7 +274,22 @@ get_thread(thread_id: str) -> dict
 - Normalizes SQLite tags format.
 - Raises `ValueError` if thread does not exist.
 
-### 4.9 `EasierlitApp.new_thread`
+### 4.12 `EasierlitApp.get_history`
+
+```python
+get_history(thread_id: str) -> dict
+```
+
+Behavior:
+
+- Loads the target thread via `get_thread(thread_id)`.
+- Preserves the original order of `thread["steps"]`.
+- Keeps only step entries that are dictionaries.
+- Returns:
+- `thread`: thread metadata without `steps`
+- `items`: one ordered list containing both message and non-message steps
+
+### 4.13 `EasierlitApp.new_thread`
 
 ```python
 new_thread(
@@ -254,7 +311,7 @@ Raises:
 
 - `RuntimeError` if unique `thread_id` allocation fails after 16 attempts.
 
-### 4.10 `EasierlitApp.update_thread`
+### 4.14 `EasierlitApp.update_thread`
 
 ```python
 update_thread(
@@ -275,7 +332,7 @@ Raises:
 
 - `ValueError` if thread does not exist.
 
-### 4.11 `EasierlitApp.delete_thread`
+### 4.15 `EasierlitApp.delete_thread`
 
 ```python
 delete_thread(thread_id: str) -> None
@@ -283,7 +340,7 @@ delete_thread(thread_id: str) -> None
 
 - Deletes thread via data layer.
 
-### 4.12 `EasierlitApp.close`
+### 4.16 `EasierlitApp.close`
 
 ```python
 close() -> None
@@ -295,7 +352,7 @@ Behavior:
 - Unblocks `recv/arecv` waiters.
 - Enqueues `close` outgoing command for dispatcher shutdown.
 
-### 4.13 `EasierlitApp.is_closed`
+### 4.17 `EasierlitApp.is_closed`
 
 ```python
 is_closed() -> bool
@@ -345,7 +402,14 @@ IncomingMessage(
 
 ```python
 OutgoingCommand(
-    command: Literal["send", "update", "delete", "close"],
+    command: Literal[
+        "add_message",
+        "add_tool",
+        "update_message",
+        "update_tool",
+        "delete",
+        "close",
+    ],
     thread_id: str | None = None,
     message_id: str | None = None,
     content: str | None = None,
@@ -358,7 +422,7 @@ OutgoingCommand(
 
 | Exception | Typical trigger | Action |
 |---|---|---|
-| `AppClosedError` | `recv()` after app closed, or enqueue/send on closed app | Stop loop and exit worker gracefully |
+| `AppClosedError` | `recv()` after app closed, or enqueue on closed app | Stop loop and exit worker gracefully |
 | `WorkerAlreadyRunningError` | `client.run()` called while worker alive | Call `client.stop()` first |
 | `RunFuncExecutionError` | Worker raised uncaught error | Inspect traceback, fix run_func logic |
 | `DataPersistenceNotEnabledError` | Thread CRUD without configured data layer | Enable persistence or register data layer |
@@ -369,14 +433,16 @@ OutgoingCommand(
 ## 7. Chainlit Message vs Tool-call Mapping
 
 - Incoming `app.recv/arecv` maps to user-message flow.
-- Outgoing `app.send` maps to assistant-message flow (`add_message` is a deprecated alias).
-- Easierlit public API does not expose dedicated tool-call step creation.
+- Outgoing `app.add_message` maps to assistant-message flow.
+- Outgoing `app.add_tool/update_tool` maps to tool-call flow with step name set from `tool_name`.
+- Outgoing `app.add_thought/update_thought` maps to tool-call flow with fixed step name `Reasoning`.
 
 ## 8. Method-to-Example Index
 
 | Method group | Example |
 |---|---|
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
-| `EasierlitApp.list_threads`, `get_thread`, `new_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
-| `EasierlitApp.send`, `add_message` (deprecated alias), `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
+| `EasierlitApp.list_threads`, `get_thread`, `get_history`, `new_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
+| `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
+| `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
 | Auth + persistence configs | `examples/custom_auth.py` |
