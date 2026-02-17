@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -21,25 +22,31 @@ class _FakeUIMessage:
         return self
 
 
+@contextmanager
+def _swap_attr(obj, name: str, value):
+    original = getattr(obj, name)
+    setattr(obj, name, value)
+    try:
+        yield
+    finally:
+        setattr(obj, name, original)
+
+
 @pytest.fixture(autouse=True)
-def _reset_runtime(monkeypatch):
+def _reset_runtime_state():
     runtime = get_runtime()
     runtime.unbind()
-    monkeypatch.setattr(chainlit_entry, "_APP_CLOSED_WARNING_EMITTED", False)
-    monkeypatch.setattr(chainlit_entry, "_WORKER_FAILURE_UI_NOTIFIED", False)
+
+    chainlit_entry._APP_CLOSED_WARNING_EMITTED = False
+    chainlit_entry._WORKER_FAILURE_UI_NOTIFIED = False
+    chainlit_entry._DISCORD_BRIDGE = None
+
     yield
+
     runtime.unbind()
-    monkeypatch.setattr(chainlit_entry, "_APP_CLOSED_WARNING_EMITTED", False)
-    monkeypatch.setattr(chainlit_entry, "_WORKER_FAILURE_UI_NOTIFIED", False)
-
-
-def _patch_chainlit_context(monkeypatch):
-    fake_session = SimpleNamespace(thread_id="thread-1", id="session-1")
-    monkeypatch.setattr(
-        chainlit_entry.cl,
-        "context",
-        SimpleNamespace(session=fake_session),
-    )
+    chainlit_entry._APP_CLOSED_WARNING_EMITTED = False
+    chainlit_entry._WORKER_FAILURE_UI_NOTIFIED = False
+    chainlit_entry._DISCORD_BRIDGE = None
 
 
 def _sample_message():
@@ -52,7 +59,7 @@ def _sample_message():
     )
 
 
-def test_on_message_swallows_closed_app_with_worker_error(monkeypatch, caplog):
+def test_on_message_swallows_closed_app_with_worker_error(caplog):
     runtime = get_runtime()
     app = EasierlitApp()
     app.close()
@@ -61,32 +68,33 @@ def test_on_message_swallows_closed_app_with_worker_error(monkeypatch, caplog):
     client._record_worker_error("Traceback (most recent call last):\nRuntimeError: boom")
 
     _FakeUIMessage.sent = []
-    _patch_chainlit_context(monkeypatch)
-    monkeypatch.setattr(chainlit_entry.cl, "Message", _FakeUIMessage)
+    fake_session = SimpleNamespace(thread_id="thread-1", id="session-1")
 
     caplog.set_level("WARNING")
-    asyncio.run(chainlit_entry._on_message(_sample_message()))
-    asyncio.run(chainlit_entry._on_message(_sample_message()))
+    with _swap_attr(chainlit_entry.cl, "context", SimpleNamespace(session=fake_session)):
+        with _swap_attr(chainlit_entry.cl, "Message", _FakeUIMessage):
+            asyncio.run(chainlit_entry._on_message(_sample_message()))
+            asyncio.run(chainlit_entry._on_message(_sample_message()))
 
     assert len(_FakeUIMessage.sent) == 1
     assert "Server is shutting down" in _FakeUIMessage.sent[0][0]
     assert "server shutdown in progress" in caplog.text.lower()
 
 
-def test_on_message_raises_when_closed_without_worker_error(monkeypatch):
+def test_on_message_raises_when_closed_without_worker_error():
     runtime = get_runtime()
     app = EasierlitApp()
     app.close()
     client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
     runtime.bind(client=client, app=app)
 
-    _patch_chainlit_context(monkeypatch)
+    fake_session = SimpleNamespace(thread_id="thread-1", id="session-1")
+    with _swap_attr(chainlit_entry.cl, "context", SimpleNamespace(session=fake_session)):
+        with pytest.raises(AppClosedError):
+            asyncio.run(chainlit_entry._on_message(_sample_message()))
 
-    with pytest.raises(AppClosedError):
-        asyncio.run(chainlit_entry._on_message(_sample_message()))
 
-
-def test_on_app_shutdown_logs_summary_without_traceback(monkeypatch, caplog):
+def test_on_app_shutdown_logs_summary_without_traceback(caplog):
     runtime = get_runtime()
     app = EasierlitApp()
     client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
@@ -101,11 +109,131 @@ def test_on_app_shutdown_logs_summary_without_traceback(monkeypatch, caplog):
     def fake_stop():
         raise RunFuncExecutionError(worker_traceback)
 
-    monkeypatch.setattr(client, "stop", fake_stop)
+    original_stop = client.stop
+    client.stop = fake_stop
 
     caplog.set_level("WARNING")
-    asyncio.run(chainlit_entry._on_app_shutdown())
+    try:
+        asyncio.run(chainlit_entry._on_app_shutdown())
+    finally:
+        client.stop = original_stop
 
     assert "run_func crash acknowledged during shutdown" in caplog.text
     assert "command '/new' failed: Chainlit context not found" in caplog.text
     assert "Traceback (most recent call last)" not in caplog.text
+
+
+def test_on_message_registers_discord_channel():
+    runtime = get_runtime()
+    app = EasierlitApp()
+    client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
+    runtime.bind(client=client, app=app)
+
+    fake_session = SimpleNamespace(thread_id="thread-1", id="session-1", client_type="discord")
+    fake_channel = SimpleNamespace(id=777)
+    fake_user_session = SimpleNamespace(get=lambda key: fake_channel if key == "discord_channel" else None)
+
+    captured: dict[str, int | str] = {}
+    original_register_discord_channel = runtime.register_discord_channel
+
+    def fake_register_discord_channel(thread_id: str, channel_id: int):
+        captured["thread_id"] = thread_id
+        captured["channel_id"] = channel_id
+
+    runtime.register_discord_channel = fake_register_discord_channel
+
+    try:
+        with _swap_attr(chainlit_entry.cl, "context", SimpleNamespace(session=fake_session)):
+            with _swap_attr(chainlit_entry.cl, "user_session", fake_user_session):
+                asyncio.run(chainlit_entry._on_message(_sample_message()))
+    finally:
+        runtime.register_discord_channel = original_register_discord_channel
+
+    assert captured["thread_id"] == "thread-1"
+    assert captured["channel_id"] == 777
+
+
+def test_on_message_does_not_register_session_for_discord_client():
+    runtime = get_runtime()
+    app = EasierlitApp()
+    client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
+    runtime.bind(client=client, app=app)
+
+    fake_session = SimpleNamespace(thread_id="thread-1", id="session-1", client_type="discord")
+    fake_channel = SimpleNamespace(id=777)
+    fake_user_session = SimpleNamespace(get=lambda key: fake_channel if key == "discord_channel" else None)
+
+    calls = {"count": 0}
+    original_register_session = runtime.register_session
+
+    def fake_register_session(_thread_id: str, _session_id: str):
+        calls["count"] += 1
+
+    runtime.register_session = fake_register_session
+
+    try:
+        with _swap_attr(chainlit_entry.cl, "context", SimpleNamespace(session=fake_session)):
+            with _swap_attr(chainlit_entry.cl, "user_session", fake_user_session):
+                asyncio.run(chainlit_entry._on_message(_sample_message()))
+    finally:
+        runtime.register_session = original_register_session
+
+    assert calls["count"] == 0
+
+
+def test_on_message_registers_session_for_non_discord_client():
+    runtime = get_runtime()
+    app = EasierlitApp()
+    client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
+    runtime.bind(client=client, app=app)
+
+    fake_session = SimpleNamespace(thread_id="thread-1", id="session-1", client_type="webapp")
+
+    calls: list[tuple[str, str]] = []
+    original_register_session = runtime.register_session
+
+    def fake_register_session(thread_id: str, session_id: str):
+        calls.append((thread_id, session_id))
+
+    runtime.register_session = fake_register_session
+
+    try:
+        with _swap_attr(chainlit_entry.cl, "context", SimpleNamespace(session=fake_session)):
+            asyncio.run(chainlit_entry._on_message(_sample_message()))
+    finally:
+        runtime.register_session = original_register_session
+
+    assert calls == [("thread-1", "session-1")]
+
+
+def test_start_and_stop_discord_bridge_lifecycle():
+    runtime = get_runtime()
+    runtime.bind(
+        client=EasierlitClient(run_func=lambda _app: None, worker_mode="thread"),
+        app=EasierlitApp(),
+        discord_token="discord-token",
+    )
+
+    started = {"count": 0}
+    stopped = {"count": 0}
+
+    class _FakeBridge:
+        def __init__(self, *, runtime, bot_token):
+            assert runtime is get_runtime()
+            assert bot_token == "discord-token"
+
+        async def start(self):
+            started["count"] += 1
+
+        async def stop(self):
+            stopped["count"] += 1
+
+    with _swap_attr(chainlit_entry, "EasierlitDiscordBridge", _FakeBridge):
+        asyncio.run(chainlit_entry._start_discord_bridge_if_needed())
+        assert started["count"] == 1
+
+        asyncio.run(chainlit_entry._start_discord_bridge_if_needed())
+        assert started["count"] == 2
+
+        asyncio.run(chainlit_entry._stop_discord_bridge_if_running())
+        assert stopped["count"] == 1

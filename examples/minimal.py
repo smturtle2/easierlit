@@ -18,9 +18,8 @@ def run_func(app):
 
 
 if __name__ == "__main__":
-    # Minimal example: no auth callbacks configured.
-    # (Chainlit policy: Thread History sidebar is shown only when
-    # requireLogin=True and dataPersistence=True.)
+    # Minimal example: auth/persistence are enabled by default.
+    # Override credentials via EASIERLIT_AUTH_USERNAME/PASSWORD or auth=...
     client = EasierlitClient(run_func=run_func, worker_mode="thread")
     server = EasierlitServer(client=client)
     server.serve()

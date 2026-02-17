@@ -20,6 +20,7 @@ EasierlitServer(
     root_path: str = "",
     auth: EasierlitAuthConfig | None = None,
     persistence: EasierlitPersistenceConfig | None = None,
+    discord: EasierlitDiscordConfig | None = None,
 )
 ```
 
@@ -27,8 +28,11 @@ Parameters:
 
 - `client`: required `EasierlitClient` instance.
 - `host`, `port`, `root_path`: Chainlit server binding/runtime path.
-- `auth`: optional auth bootstrap config.
-- `persistence`: optional persistence config. Defaults to internal SQLite bootstrap behavior.
+- `auth`: auth bootstrap config. If `None`, Easierlit auto-enables auth using:
+- `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` when both are present.
+- fallback `admin` / `admin` when both are absent (warning log emitted).
+- `persistence`: optional persistence config. If `None`, default SQLite bootstrap behavior is enabled.
+- `discord`: optional Discord bot config. Defaults to disabled behavior.
 
 ### 2.2 `EasierlitServer.serve`
 
@@ -43,6 +47,9 @@ Behavior:
 - Starts Chainlit in headless mode.
 - Forces sidebar default state to `open`.
 - Forces CoT mode to `full`.
+- Resolves Discord token as `bot_token` first, then `DISCORD_BOT_TOKEN` fallback.
+- Runs Discord through Easierlit's own bridge (no runtime monkeypatching of Chainlit Discord handlers).
+- Keeps Chainlit's `DISCORD_BOT_TOKEN` startup path disabled during `serve()` and restores the previous env value on shutdown.
 - On shutdown, calls `client.stop()` and unbinds runtime.
 - Uses fail-fast policy on worker crash.
 
@@ -50,6 +57,8 @@ May raise:
 
 - `WorkerAlreadyRunningError` from `client.run(...)`.
 - `RunFuncExecutionError` from `client.stop(...)` during shutdown when worker crashed.
+- `ValueError` when exactly one of `EASIERLIT_AUTH_USERNAME` and `EASIERLIT_AUTH_PASSWORD` is set.
+- `ValueError` when Discord is enabled and no non-empty token is available.
 
 ## 3. EasierlitClient
 
@@ -374,6 +383,7 @@ EasierlitAuthConfig(
 ```
 
 - `username` and `password` must be non-empty.
+- For `EasierlitServer(auth=None)`, this config is auto-created from environment/default credentials.
 
 ### 5.2 `EasierlitPersistenceConfig`
 
@@ -384,7 +394,25 @@ EasierlitPersistenceConfig(
 )
 ```
 
-### 5.3 `IncomingMessage`
+### 5.3 `EasierlitDiscordConfig`
+
+```python
+EasierlitDiscordConfig(
+    enabled: bool = True,
+    bot_token: str | None = None,
+)
+```
+
+Behavior:
+
+- `discord=None` on `EasierlitServer(...)` keeps Discord disabled during `serve()`.
+- Passing `discord=EasierlitDiscordConfig(...)` enables Discord by default.
+- `enabled=False`: Easierlit Discord bridge is not started.
+- `enabled=True`: Discord bot token order is `bot_token` first (if non-empty), then `DISCORD_BOT_TOKEN` as fallback.
+- Easierlit keeps Chainlit's `DISCORD_BOT_TOKEN` startup path disabled and restores the original env value after shutdown.
+- Raises `ValueError` if Discord is enabled and no non-empty token is available.
+
+### 5.4 `IncomingMessage`
 
 ```python
 IncomingMessage(
@@ -398,7 +426,7 @@ IncomingMessage(
 )
 ```
 
-### 5.4 `OutgoingCommand`
+### 5.5 `OutgoingCommand`
 
 ```python
 OutgoingCommand(
@@ -446,3 +474,4 @@ OutgoingCommand(
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
 | Auth + persistence configs | `examples/custom_auth.py` |
+| Discord config | `examples/discord_bot.py` |

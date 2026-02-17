@@ -72,6 +72,7 @@ EasierlitServer(
     root_path="",
     auth=None,
     persistence=None,
+    discord=None,
 )
 
 EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
@@ -95,6 +96,7 @@ EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(enabled=True, sqlite_path=".chainlit/easierlit.db")
+EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
 
 ## 5. 서버 런타임 정책
@@ -107,8 +109,18 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 - `CHAINLIT_AUTH_COOKIE_NAME=easierlit_access_token`
 - JWT secret 자동 관리(`.chainlit/jwt.secret`)
 - `run_func` fail-fast: 워커 예외 시 서버 종료 트리거
+- `serve()` 실행 중 Discord 연동은 기본 비활성(`DISCORD_BOT_TOKEN`이 이미 있어도 비활성)
 
-## 6. 인증과 영속성
+## 6. 인증, 영속성, Discord
+
+생략 시 기본 동작:
+
+- `auth=None`: 인증이 자동 활성화됩니다.
+- 인증 자격증명 해석 순서:
+- `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` (둘 다 함께 설정 필요)
+- 폴백 `admin` / `admin` (경고 로그 출력)
+- `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 중 하나만 설정하면 `ValueError`가 발생합니다.
+- `persistence=None`: 기본 SQLite 영속성(`.chainlit/easierlit.db`)이 활성화됩니다.
 
 인증 설정 예시:
 
@@ -137,6 +149,31 @@ persistence = EasierlitPersistenceConfig(
 
 server = EasierlitServer(client=client, persistence=persistence)
 ```
+
+Discord 설정 예시:
+
+```python
+import os
+
+from easierlit import EasierlitDiscordConfig, EasierlitServer
+
+# config token이 환경변수 token보다 우선합니다.
+discord = EasierlitDiscordConfig(
+    bot_token=os.environ.get("MY_DISCORD_TOKEN"),
+)
+
+server = EasierlitServer(client=client, discord=discord)
+```
+
+Discord 토큰 해석 정책:
+
+- `discord=None`이면 Discord 비활성
+- `discord=EasierlitDiscordConfig(...)`를 전달하면 기본 활성
+- `EasierlitDiscordConfig.bot_token`이 비어 있지 않으면 우선 사용
+- config token이 없으면 `DISCORD_BOT_TOKEN`을 폴백으로 사용
+- Discord 활성화 상태에서 유효 토큰이 없으면 `serve()`가 `ValueError` 발생
+- Easierlit은 자체 Discord bridge로 동작하며 Chainlit Discord handler를 런타임에 monkeypatch하지 않음
+- `serve()` 동안 Chainlit의 `DISCORD_BOT_TOKEN` startup 경로를 비활성으로 유지하고 종료 후 기존 env 값을 복원
 
 Thread History 표시 조건(Chainlit 정책):
 
@@ -256,6 +293,7 @@ SQLite `tags` 바인딩 이슈:
 
 - `examples/minimal.py`
 - `examples/custom_auth.py`
+- `examples/discord_bot.py`
 - `examples/thread_crud.py`
 - `examples/thread_create_in_run_func.py`
 - `examples/step_types.py`

@@ -22,3 +22,13 @@ class EasierlitAuthConfig:
 class EasierlitPersistenceConfig:
     enabled: bool = True
     sqlite_path: str = ".chainlit/easierlit.db"
+
+
+@dataclass(slots=True)
+class EasierlitDiscordConfig:
+    enabled: bool = True
+    bot_token: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.bot_token is not None and not self.bot_token.strip():
+            raise ValueError("EasierlitDiscordConfig.bot_token must not be empty.")

@@ -1,7 +1,7 @@
 import asyncio
 
 from easierlit.models import OutgoingCommand
-from easierlit.runtime import get_runtime
+from easierlit.runtime import RuntimeRegistry
 
 
 class _FakeDataLayer:
@@ -12,18 +12,17 @@ class _FakeDataLayer:
         self.created_steps.append(step_dict)
 
 
-def test_apply_outgoing_command_initializes_http_context(monkeypatch):
-    runtime = get_runtime()
-    runtime.unbind()
-
+def test_apply_outgoing_command_initializes_http_context():
     data_layer = _FakeDataLayer()
     context_calls = []
 
     def fake_init_http_context(*, thread_id: str, client_type: str):
         context_calls.append((thread_id, client_type))
 
-    monkeypatch.setattr("easierlit.runtime.get_data_layer", lambda: data_layer)
-    monkeypatch.setattr("easierlit.runtime.init_http_context", fake_init_http_context)
+    runtime = RuntimeRegistry(
+        data_layer_getter=lambda: data_layer,
+        init_http_context_fn=fake_init_http_context,
+    )
 
     command = OutgoingCommand(
         command="add_message",

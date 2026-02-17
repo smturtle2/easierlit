@@ -1,34 +1,49 @@
 import asyncio
+import os
 
 import pytest
 from chainlit.config import config
 
+import easierlit.chainlit_entry as chainlit_entry
 from easierlit import EasierlitApp, EasierlitAuthConfig, EasierlitClient
 from easierlit.chainlit_entry import _apply_runtime_configuration
 from easierlit.runtime import get_runtime
 
 
 @pytest.fixture(autouse=True)
-def _reset_state(monkeypatch):
+def _reset_state():
     runtime = get_runtime()
     runtime.unbind()
-    monkeypatch.setattr("easierlit.chainlit_entry._CONFIG_APPLIED", False)
 
+    previous_database_url = os.environ.get("DATABASE_URL")
+    previous_literal_api_key = os.environ.get("LITERAL_API_KEY")
+
+    chainlit_entry._CONFIG_APPLIED = False
     config.code.password_auth_callback = None
     config.code.data_layer = None
+
+    os.environ.pop("DATABASE_URL", None)
+    os.environ.pop("LITERAL_API_KEY", None)
 
     yield
 
     runtime.unbind()
-    monkeypatch.setattr("easierlit.chainlit_entry._CONFIG_APPLIED", False)
+    chainlit_entry._CONFIG_APPLIED = False
     config.code.password_auth_callback = None
     config.code.data_layer = None
 
+    if previous_database_url is None:
+        os.environ.pop("DATABASE_URL", None)
+    else:
+        os.environ["DATABASE_URL"] = previous_database_url
 
-def test_auth_config_sets_password_callback(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("LITERAL_API_KEY", raising=False)
+    if previous_literal_api_key is None:
+        os.environ.pop("LITERAL_API_KEY", None)
+    else:
+        os.environ["LITERAL_API_KEY"] = previous_literal_api_key
 
+
+def test_auth_config_sets_password_callback():
     auth = EasierlitAuthConfig(
         username="admin",
         password="admin",
@@ -53,10 +68,7 @@ def test_auth_config_sets_password_callback(monkeypatch):
     assert invalid is None
 
 
-def test_auth_config_uses_custom_identifier(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("LITERAL_API_KEY", raising=False)
-
+def test_auth_config_uses_custom_identifier():
     auth = EasierlitAuthConfig(
         username="admin",
         password="admin",

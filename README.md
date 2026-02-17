@@ -124,6 +124,7 @@ EasierlitServer(
     root_path="",
     auth=None,
     persistence=None,
+    discord=None,
 )
 
 EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
@@ -147,6 +148,7 @@ EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(enabled=True, sqlite_path=".chainlit/easierlit.db")
+EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
 
 For exact method contracts, use:
@@ -159,9 +161,14 @@ This includes parameter constraints, return semantics, exceptions, side effects,
 
 - JWT secret: auto-managed at `.chainlit/jwt.secret`
 - Auth cookie: `easierlit_access_token`
+- Default auth is enabled when `auth=None`
+- Auth credential order for `auth=None`:
+- `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` (must be set together)
+- fallback to `admin` / `admin` (warning log emitted)
 - Default persistence: SQLite at `.chainlit/easierlit.db`
 - If SQLite schema is incompatible, Easierlit recreates DB with backup
 - Sidebar default state is forced to `open`
+- Discord integration is disabled by default during `serve()`, even if `DISCORD_BOT_TOKEN` already exists.
 
 Thread History sidebar visibility follows Chainlit policy:
 
@@ -170,8 +177,18 @@ Thread History sidebar visibility follows Chainlit policy:
 
 Typical Easierlit setup:
 
-- set `auth=EasierlitAuthConfig(...)`
-- keep persistence enabled (default)
+- keep `auth=None` and `persistence=None` for default enabled auth + persistence
+- optionally set `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` for non-default credentials
+- or pass explicit `auth=EasierlitAuthConfig(...)`
+
+Discord bot setup:
+
+- Keep `discord=None` to disable Discord integration.
+- Pass `discord=EasierlitDiscordConfig(...)` to enable it.
+- Token precedence: `EasierlitDiscordConfig.bot_token` first, `DISCORD_BOT_TOKEN` fallback.
+- Easierlit runs Discord through its own bridge (no runtime monkeypatching of Chainlit Discord handlers).
+- During `serve()`, Chainlit's `DISCORD_BOT_TOKEN` path stays disabled; Easierlit restores the original env value after shutdown.
+- If enabled and no non-empty token is available, `serve()` raises `ValueError`.
 
 ## Message and Thread Operations
 
@@ -239,6 +256,7 @@ Easierlit v0.4.0 mapping:
 
 - `examples/minimal.py`: basic echo bot
 - `examples/custom_auth.py`: single-account auth
+- `examples/discord_bot.py`: Discord bot configuration and token precedence
 - `examples/thread_crud.py`: thread list/get/update/delete
 - `examples/thread_create_in_run_func.py`: create thread from `run_func`
 - `examples/step_types.py`: tool/thought step creation, update, delete example

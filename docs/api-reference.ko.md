@@ -20,6 +20,7 @@ EasierlitServer(
     root_path: str = "",
     auth: EasierlitAuthConfig | None = None,
     persistence: EasierlitPersistenceConfig | None = None,
+    discord: EasierlitDiscordConfig | None = None,
 )
 ```
 
@@ -27,8 +28,11 @@ EasierlitServer(
 
 - `client`: 필수 `EasierlitClient` 인스턴스
 - `host`, `port`, `root_path`: Chainlit 서버 바인딩/경로 설정
-- `auth`: 선택 인증 부트스트랩 설정
-- `persistence`: 선택 영속성 설정 (기본은 내부 SQLite 부트스트랩 정책)
+- `auth`: 인증 부트스트랩 설정. `None`이면 Easierlit이 아래 순서로 인증을 자동 활성화
+- `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD`가 모두 있으면 해당 값 사용
+- 둘 다 없으면 `admin` / `admin` 폴백 사용 (경고 로그 출력)
+- `persistence`: 선택 영속성 설정. `None`이면 기본 SQLite 부트스트랩 정책 활성
+- `discord`: 선택 Discord 봇 설정 (기본은 비활성 정책)
 
 ### 2.2 `EasierlitServer.serve`
 
@@ -43,6 +47,9 @@ serve() -> None
 - Chainlit headless 실행
 - sidebar 기본 상태를 `open`으로 강제
 - CoT 모드를 `full`로 강제
+- Discord 토큰 해석 순서: `bot_token` 우선, 없으면 `DISCORD_BOT_TOKEN` 폴백
+- Chainlit Discord handler를 런타임 monkeypatch하지 않고 Easierlit 자체 Discord bridge를 사용
+- `serve()` 동안 Chainlit의 `DISCORD_BOT_TOKEN` startup 경로를 비활성으로 유지하고 종료 시 기존 env 값을 복원
 - 종료 시 `client.stop()` 호출 후 runtime unbind
 - 워커 크래시에 대해 fail-fast 정책 적용
 
@@ -50,6 +57,8 @@ serve() -> None
 
 - `client.run(...)` 경로의 `WorkerAlreadyRunningError`
 - 종료 시 워커 크래시를 재전파하는 `RunFuncExecutionError`
+- `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 중 하나만 설정된 경우 `ValueError`
+- Discord 활성화 상태에서 토큰이 없을 때 `ValueError`
 
 ## 3. EasierlitClient
 
@@ -374,6 +383,7 @@ EasierlitAuthConfig(
 ```
 
 - `username`, `password`는 빈 문자열 불가
+- `EasierlitServer(auth=None)` 경로에서는 이 설정이 환경변수/기본값으로 자동 생성됨
 
 ### 5.2 `EasierlitPersistenceConfig`
 
@@ -384,7 +394,25 @@ EasierlitPersistenceConfig(
 )
 ```
 
-### 5.3 `IncomingMessage`
+### 5.3 `EasierlitDiscordConfig`
+
+```python
+EasierlitDiscordConfig(
+    enabled: bool = True,
+    bot_token: str | None = None,
+)
+```
+
+동작:
+
+- `EasierlitServer(...)`에서 `discord=None`이면 `serve()` 동안 Discord 비활성
+- `discord=EasierlitDiscordConfig(...)`를 전달하면 기본 활성
+- `enabled=False`: Easierlit Discord bridge를 시작하지 않음
+- `enabled=True`: Discord 토큰 우선순위는 `bot_token`(비어 있지 않은 경우) 우선, `DISCORD_BOT_TOKEN` 폴백
+- `serve()` 동안 Chainlit의 `DISCORD_BOT_TOKEN` startup 경로를 비활성으로 유지하고 종료 후 기존 env 값을 복원
+- 활성화 상태에서 비어 있지 않은 토큰이 없으면 `ValueError`
+
+### 5.4 `IncomingMessage`
 
 ```python
 IncomingMessage(
@@ -398,7 +426,7 @@ IncomingMessage(
 )
 ```
 
-### 5.4 `OutgoingCommand`
+### 5.5 `OutgoingCommand`
 
 ```python
 OutgoingCommand(
@@ -446,3 +474,4 @@ OutgoingCommand(
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
 | 인증/영속성 설정 | `examples/custom_auth.py` |
+| Discord 설정 | `examples/discord_bot.py` |

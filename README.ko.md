@@ -124,6 +124,7 @@ EasierlitServer(
     root_path="",
     auth=None,
     persistence=None,
+    discord=None,
 )
 
 EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
@@ -147,6 +148,7 @@ EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(enabled=True, sqlite_path=".chainlit/easierlit.db")
+EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
 
 메서드별 정확한 계약은 아래 문서를 우선 참고하세요.
@@ -159,9 +161,14 @@ EasierlitPersistenceConfig(enabled=True, sqlite_path=".chainlit/easierlit.db")
 
 - JWT secret: `.chainlit/jwt.secret` 자동관리
 - 인증 cookie: `easierlit_access_token`
+- `auth=None`이면 기본 인증 자동 활성
+- `auth=None`일 때 인증 자격증명 해석 순서:
+- `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` (둘 다 함께 설정 필요)
+- 폴백 `admin` / `admin` (경고 로그 출력)
 - 기본 persistence: `.chainlit/easierlit.db` (SQLite)
 - SQLite 스키마 불일치 시 백업 후 재생성
 - sidebar 기본 상태는 `open`으로 강제
+- `serve()` 실행 중 Discord 연동은 기본 비활성입니다(`DISCORD_BOT_TOKEN`이 기존에 있어도 비활성).
 
 Thread History 표시 조건(Chainlit 정책):
 
@@ -170,8 +177,18 @@ Thread History 표시 조건(Chainlit 정책):
 
 Easierlit에서 일반적인 구성:
 
-- `auth=EasierlitAuthConfig(...)` 설정
-- persistence 기본값 유지
+- `auth=None`, `persistence=None`으로 기본 인증/영속성 활성 사용
+- 기본 계정을 쓰지 않으려면 `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 설정
+- 또는 `auth=EasierlitAuthConfig(...)`를 명시 전달
+
+Discord 봇 구성:
+
+- `discord=None`이면 Discord 연동 비활성
+- `discord=EasierlitDiscordConfig(...)`를 전달하면 기본 활성
+- 토큰 우선순위: `EasierlitDiscordConfig.bot_token` 우선, `DISCORD_BOT_TOKEN` 폴백
+- Easierlit은 자체 Discord bridge로 동작하며 Chainlit Discord handler를 런타임에 monkeypatch하지 않음
+- `serve()` 중에는 Chainlit의 `DISCORD_BOT_TOKEN` 경로를 비활성으로 유지하고, 종료 시 기존 env 값을 복원
+- 활성화 상태에서 비어 있지 않은 토큰을 찾지 못하면 `serve()`가 `ValueError`를 발생
 
 ## Message / Thread 작업
 
@@ -239,6 +256,7 @@ Easierlit v0.4.0 매핑:
 
 - `examples/minimal.py`: 기본 echo bot
 - `examples/custom_auth.py`: 단일 계정 인증
+- `examples/discord_bot.py`: Discord 봇 설정과 토큰 우선순위
 - `examples/thread_crud.py`: thread list/get/update/delete
 - `examples/thread_create_in_run_func.py`: `run_func`에서 thread 생성
 - `examples/step_types.py`: tool/thought step 생성/수정/삭제 예제

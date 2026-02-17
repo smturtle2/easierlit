@@ -11,7 +11,7 @@ from .errors import (
 )
 from .models import IncomingMessage, OutgoingCommand
 from .server import EasierlitServer
-from .settings import EasierlitAuthConfig, EasierlitPersistenceConfig
+from .settings import EasierlitAuthConfig, EasierlitDiscordConfig, EasierlitPersistenceConfig
 
 __all__ = [
     "AppClosedError",
@@ -19,6 +19,7 @@ __all__ = [
     "EasierlitApp",
     "EasierlitAuthConfig",
     "EasierlitClient",
+    "EasierlitDiscordConfig",
     "EasierlitError",
     "EasierlitPersistenceConfig",
     "EasierlitServer",

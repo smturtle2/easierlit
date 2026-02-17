@@ -4,6 +4,7 @@ import asyncio
 import json
 import queue
 import threading
+from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
 
@@ -26,11 +27,19 @@ class EasierlitApp:
 
     _THOUGHT_TOOL_NAME = "Reasoning"
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        runtime=None,
+        data_layer_getter: Callable[[], Any | None] = get_data_layer,
+        uuid_factory: Callable[[], Any] = uuid4,
+    ):
         self._incoming_queue: queue.Queue[IncomingMessage | None] = queue.Queue()
         self._outgoing_queue: queue.Queue[OutgoingCommand] = queue.Queue()
         self._closed = threading.Event()
-        self._runtime = get_runtime()
+        self._runtime = runtime if runtime is not None else get_runtime()
+        self._data_layer_getter = data_layer_getter
+        self._uuid_factory = uuid_factory
 
     def recv(self, timeout: float | None = None) -> IncomingMessage:
         if self._closed.is_set():
@@ -60,7 +69,7 @@ class EasierlitApp:
         metadata: dict | None = None,
     ) -> str:
         """Enqueue an assistant message and return the generated message id."""
-        message_id = str(uuid4())
+        message_id = str(self._uuid_factory())
         self._put_outgoing(
             OutgoingCommand(
                 command="add_message",
@@ -81,7 +90,7 @@ class EasierlitApp:
         metadata: dict | None = None,
     ) -> str:
         """Enqueue a tool-call step and return the generated message id."""
-        message_id = str(uuid4())
+        message_id = str(self._uuid_factory())
         self._put_outgoing(
             OutgoingCommand(
                 command="add_tool",
@@ -267,7 +276,7 @@ class EasierlitApp:
         async def _new_thread() -> str:
             owner_user_id = await self._resolve_default_owner_user_id(data_layer)
             for _ in range(16):
-                thread_id = str(uuid4())
+                thread_id = str(self._uuid_factory())
                 existing = await data_layer.get_thread(thread_id)
                 if existing is not None:
                     continue
@@ -349,7 +358,7 @@ class EasierlitApp:
         self._outgoing_queue.put_nowait(command)
 
     def _get_data_layer_or_raise(self):
-        data_layer = get_data_layer()
+        data_layer = self._data_layer_getter()
         if data_layer is None:
             raise DataPersistenceNotEnabledError(
                 "Data persistence is not enabled. Configure Chainlit data layer first."

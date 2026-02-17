@@ -4,6 +4,7 @@ import asyncio
 import logging
 import queue
 import threading
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Coroutine
 
 from chainlit.context import init_http_context
@@ -24,17 +25,30 @@ LOGGER = logging.getLogger(__name__)
 
 
 class RuntimeRegistry:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        data_layer_getter: Callable[[], Any | None] = get_data_layer,
+        init_http_context_fn: Callable[..., Any] = init_http_context,
+        utc_now_fn: Callable[[], Any] = utc_now,
+    ) -> None:
         self._client: EasierlitClient | None = None
         self._app: EasierlitApp | None = None
         self._auth: EasierlitAuthConfig | None = None
         self._persistence: EasierlitPersistenceConfig | None = None
+        self._discord_token: str | None = None
 
         self._thread_to_session: dict[str, str] = {}
         self._session_to_thread: dict[str, str] = {}
+        self._thread_to_discord_channel: dict[str, int] = {}
 
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._dispatcher_task: asyncio.Task[None] | None = None
+
+        self._data_layer_getter = data_layer_getter
+        self._init_http_context_fn = init_http_context_fn
+        self._utc_now_fn = utc_now_fn
+        self._discord_sender: Callable[[int, OutgoingCommand], Awaitable[bool]] | None = None
 
         self._lock = threading.RLock()
 
@@ -45,14 +59,18 @@ class RuntimeRegistry:
         app: EasierlitApp,
         auth: EasierlitAuthConfig | None = None,
         persistence: EasierlitPersistenceConfig | None = None,
+        discord_token: str | None = None,
     ) -> None:
         with self._lock:
             self._client = client
             self._app = app
             self._auth = auth
             self._persistence = persistence
+            self._discord_token = discord_token
             self._thread_to_session.clear()
             self._session_to_thread.clear()
+            self._thread_to_discord_channel.clear()
+            self._discord_sender = None
 
     def unbind(self) -> None:
         with self._lock:
@@ -60,10 +78,13 @@ class RuntimeRegistry:
             self._app = None
             self._auth = None
             self._persistence = None
+            self._discord_token = None
             self._thread_to_session.clear()
             self._session_to_thread.clear()
+            self._thread_to_discord_channel.clear()
             self._main_loop = None
             self._dispatcher_task = None
+            self._discord_sender = None
 
     def get_client(self) -> EasierlitClient | None:
         return self._client
@@ -76,6 +97,16 @@ class RuntimeRegistry:
 
     def get_persistence(self) -> EasierlitPersistenceConfig | None:
         return self._persistence
+
+    def get_discord_token(self) -> str | None:
+        return self._discord_token
+
+    def set_discord_sender(
+        self,
+        sender: Callable[[int, OutgoingCommand], Awaitable[bool]] | None,
+    ) -> None:
+        with self._lock:
+            self._discord_sender = sender
 
     def set_main_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._main_loop = loop
@@ -106,6 +137,10 @@ class RuntimeRegistry:
             self._thread_to_session[thread_id] = session_id
             self._session_to_thread[session_id] = thread_id
 
+    def register_discord_channel(self, thread_id: str, channel_id: int) -> None:
+        with self._lock:
+            self._thread_to_discord_channel[thread_id] = channel_id
+
     def unregister_session(self, session_id: str) -> None:
         with self._lock:
             thread_id = self._session_to_thread.pop(session_id, None)
@@ -115,6 +150,10 @@ class RuntimeRegistry:
     def get_session_id_for_thread(self, thread_id: str) -> str | None:
         with self._lock:
             return self._thread_to_session.get(thread_id)
+
+    def get_discord_channel_for_thread(self, thread_id: str) -> int | None:
+        with self._lock:
+            return self._thread_to_discord_channel.get(thread_id)
 
     def enqueue_incoming(self, message: IncomingMessage) -> None:
         app = self._app
@@ -188,12 +227,31 @@ class RuntimeRegistry:
         if not thread_id:
             raise ValueError("Outgoing command is missing thread_id.")
 
+        session_handled = False
         session = self._resolve_session(thread_id)
         if session is not None:
             await self._apply_realtime_command(session, command)
+            session_handled = True
+
+        discord_handled = False
+        discord_channel_id = self.get_discord_channel_for_thread(thread_id)
+        if discord_channel_id is not None:
+            discord_handled = await self._apply_discord_command(discord_channel_id, command)
+
+        # Realtime session handling is sufficient; avoid duplicate data-layer writes.
+        if session_handled:
             return
 
-        data_layer = get_data_layer()
+        data_layer = self._data_layer_getter()
+
+        # Discord-only paths should still persist when data layer exists so
+        # web history can see assistant/tool outputs.
+        if discord_handled:
+            if data_layer:
+                await self._apply_data_layer_command(command)
+                return
+            return
+
         if not data_layer:
             raise ThreadSessionNotActiveError(
                 f"Thread '{thread_id}' has no active session and no data layer fallback."
@@ -276,7 +334,7 @@ class RuntimeRegistry:
         raise ValueError(f"Unsupported command: {command.command}")
 
     async def _apply_data_layer_command(self, command: OutgoingCommand) -> None:
-        data_layer = get_data_layer()
+        data_layer = self._data_layer_getter()
         if not data_layer:
             raise RuntimeError("Data layer unexpectedly missing.")
 
@@ -293,7 +351,7 @@ class RuntimeRegistry:
         if not command.message_id:
             raise ValueError(f"{command.command} command requires message_id.")
 
-        timestamp = utc_now()
+        timestamp = self._utc_now_fn()
         is_tool_command = command.command in ("add_tool", "update_tool")
         step_dict = {
             "id": command.message_id,
@@ -320,8 +378,46 @@ class RuntimeRegistry:
 
         raise ValueError(f"Unsupported command: {command.command}")
 
+    async def _apply_discord_command(self, channel_id: int, command: OutgoingCommand) -> bool:
+        if command.command not in ("add_message", "add_tool"):
+            return False
+
+        discord_sender = self._discord_sender
+        if discord_sender is not None:
+            try:
+                return await discord_sender(channel_id, command)
+            except Exception:
+                LOGGER.exception("Registered Discord sender failed for channel %s.", channel_id)
+                return False
+
+        try:
+            from chainlit.discord.app import client
+        except Exception:
+            LOGGER.exception("Failed to import Chainlit Discord client.")
+            return False
+
+        channel = client.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await client.fetch_channel(channel_id)
+            except Exception:
+                LOGGER.exception("Failed to fetch Discord channel %s.", channel_id)
+                return False
+
+        content = command.content or ""
+        if command.command == "add_tool":
+            content = f"[{command.author}] {content}"
+
+        try:
+            await channel.send(content)
+        except Exception:
+            LOGGER.exception("Failed to send Discord message for thread '%s'.", command.thread_id)
+            return False
+
+        return True
+
     def _init_data_layer_http_context(self, thread_id: str) -> None:
-        init_http_context(thread_id=thread_id, client_type="webapp")
+        self._init_http_context_fn(thread_id=thread_id, client_type="webapp")
 
 
 _RUNTIME = RuntimeRegistry()

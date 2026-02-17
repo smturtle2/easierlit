@@ -20,6 +20,7 @@ _SRC_ROOT = _THIS_FILE.parents[1]
 if str(_SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(_SRC_ROOT))
 
+from easierlit.discord_bridge import EasierlitDiscordBridge
 from easierlit.errors import AppClosedError, RunFuncExecutionError
 from easierlit.models import IncomingMessage
 from easierlit.runtime import get_runtime
@@ -31,6 +32,7 @@ RUNTIME = get_runtime()
 _CONFIG_APPLIED = False
 _APP_CLOSED_WARNING_EMITTED = False
 _WORKER_FAILURE_UI_NOTIFIED = False
+_DISCORD_BRIDGE: EasierlitDiscordBridge | None = None
 
 
 def _summarize_worker_error(traceback_text: str) -> str:
@@ -38,6 +40,38 @@ def _summarize_worker_error(traceback_text: str) -> str:
     if lines:
         return lines[-1]
     return "Unknown run_func error"
+
+
+def _register_discord_channel_for_current_session() -> None:
+    session = cl.context.session
+    if getattr(session, "client_type", None) != "discord":
+        return
+
+    try:
+        channel = cl.user_session.get("discord_channel")
+    except Exception:
+        return
+
+    channel_id = getattr(channel, "id", None)
+    if channel_id is None:
+        return
+
+    try:
+        resolved_channel_id = int(channel_id)
+    except (TypeError, ValueError):
+        return
+
+    RUNTIME.register_discord_channel(
+        thread_id=session.thread_id,
+        channel_id=resolved_channel_id,
+    )
+
+
+def _register_non_discord_session_for_current_session() -> None:
+    session = cl.context.session
+    if getattr(session, "client_type", None) == "discord":
+        return
+    RUNTIME.register_session(thread_id=session.thread_id, session_id=session.id)
 
 
 def _apply_runtime_configuration() -> None:
@@ -104,6 +138,38 @@ def _register_default_data_layer_if_needed() -> None:
     LOGGER.info("Easierlit default SQLite data layer enabled at %s", db_path)
 
 
+async def _start_discord_bridge_if_needed() -> None:
+    global _DISCORD_BRIDGE
+
+    discord_token = RUNTIME.get_discord_token()
+    if discord_token is None:
+        return
+
+    if _DISCORD_BRIDGE is None:
+        _DISCORD_BRIDGE = EasierlitDiscordBridge(runtime=RUNTIME, bot_token=discord_token)
+
+    try:
+        await _DISCORD_BRIDGE.start()
+    except Exception:
+        LOGGER.exception("Failed to start Easierlit Discord bridge.")
+        await _DISCORD_BRIDGE.stop()
+        _DISCORD_BRIDGE = None
+
+
+async def _stop_discord_bridge_if_running() -> None:
+    global _DISCORD_BRIDGE
+
+    bridge = _DISCORD_BRIDGE
+    _DISCORD_BRIDGE = None
+    if bridge is None:
+        return
+
+    try:
+        await bridge.stop()
+    except Exception:
+        LOGGER.exception("Failed to stop Easierlit Discord bridge cleanly.")
+
+
 @cl.on_app_startup
 async def _on_app_startup() -> None:
     global _APP_CLOSED_WARNING_EMITTED, _WORKER_FAILURE_UI_NOTIFIED
@@ -112,6 +178,7 @@ async def _on_app_startup() -> None:
     _WORKER_FAILURE_UI_NOTIFIED = False
     RUNTIME.set_main_loop(asyncio.get_running_loop())
     await RUNTIME.start_dispatcher()
+    await _start_discord_bridge_if_needed()
 
     try:
         data_layer = get_data_layer()
@@ -134,6 +201,8 @@ async def _on_app_startup() -> None:
 @cl.on_app_shutdown
 async def _on_app_shutdown() -> None:
     global _APP_CLOSED_WARNING_EMITTED, _CONFIG_APPLIED, _WORKER_FAILURE_UI_NOTIFIED
+
+    await _stop_discord_bridge_if_running()
     await RUNTIME.stop_dispatcher()
 
     client = RUNTIME.get_client()
@@ -154,14 +223,14 @@ async def _on_app_shutdown() -> None:
 
 @cl.on_chat_start
 async def _on_chat_start() -> None:
-    session = cl.context.session
-    RUNTIME.register_session(thread_id=session.thread_id, session_id=session.id)
+    _register_non_discord_session_for_current_session()
+    _register_discord_channel_for_current_session()
 
 
 @cl.on_chat_resume
 async def _on_chat_resume(_thread: dict) -> None:
-    session = cl.context.session
-    RUNTIME.register_session(thread_id=session.thread_id, session_id=session.id)
+    _register_non_discord_session_for_current_session()
+    _register_discord_channel_for_current_session()
 
 
 @cl.on_chat_end
@@ -175,7 +244,8 @@ async def _on_message(message: cl.Message) -> None:
     global _APP_CLOSED_WARNING_EMITTED, _WORKER_FAILURE_UI_NOTIFIED
 
     session = cl.context.session
-    RUNTIME.register_session(thread_id=session.thread_id, session_id=session.id)
+    _register_non_discord_session_for_current_session()
+    _register_discord_channel_for_current_session()
 
     incoming = IncomingMessage(
         thread_id=session.thread_id,
