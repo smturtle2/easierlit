@@ -1,14 +1,13 @@
-# Easierlit 사용 가이드 (v0.4.0)
+# Easierlit 사용 가이드
 
-이 문서는 Easierlit v0.4.0의 상세 사용 레퍼런스입니다.
+이 문서는 Easierlit의 상세 사용 레퍼런스입니다.
 메서드 단위의 정확한 계약(시그니처/예외/실패모드)은 아래 API 레퍼런스를 우선 참고하세요.
 
 - `docs/api-reference.en.md`
 - `docs/api-reference.ko.md`
 
-## 1. 범위와 버전
+## 1. 범위
 
-- 대상 버전: `0.4.0`
 - 런타임 코어: Chainlit (`chainlit>=2.9,<3`)
 - 현재 공개 API 기준만 다룹니다.
 
@@ -257,7 +256,7 @@ Chainlit은 step type으로 메시지와 도구/실행을 구분합니다.
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.4.0 매핑:
+Easierlit 매핑:
 
 - `app.recv()` 입력은 사용자 메시지 흐름
 - `app.arecv()` 입력도 동일한 사용자 메시지 흐름 계약을 따름
@@ -298,7 +297,7 @@ SQLite `tags` 바인딩 이슈:
 - `examples/thread_create_in_run_func.py`
 - `examples/step_types.py`
 
-## 14. 릴리스 체크리스트 (v0.4.0)
+## 14. 릴리스 체크리스트
 
 ```bash
 python3 -m py_compile examples/*.py
@@ -309,5 +308,5 @@ python3 -m twine check dist/*
 
 추가 확인:
 
-- `pyproject.toml` version이 `0.4.0`
+- `pyproject.toml` version이 릴리스 태그와 일치
 - 문서 링크 정상(`README.md`, `README.ko.md`, `docs/usage.en.md`, `docs/usage.ko.md`, `docs/api-reference.en.md`, `docs/api-reference.ko.md`)

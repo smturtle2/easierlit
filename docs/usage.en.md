@@ -1,14 +1,13 @@
-# Easierlit Usage Guide (v0.4.0)
+# Easierlit Usage Guide
 
-This document is the detailed usage reference for Easierlit v0.4.0.
+This document is the detailed usage reference for Easierlit.
 For exact method-level contracts (signature, raises, failure modes), see:
 
 - `docs/api-reference.en.md`
 - `docs/api-reference.ko.md`
 
-## 1. Scope and Version
+## 1. Scope
 
-- Version target: `0.4.0`
 - Runtime core: Chainlit (`chainlit>=2.9,<3`)
 - This guide covers current public APIs only.
 
@@ -257,7 +256,7 @@ Tool/run family includes:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.4.0 mapping:
+Easierlit mapping:
 
 - Incoming `app.recv()` data is user-message flow.
 - Incoming `app.arecv()` data follows the same user-message flow contract.
@@ -298,7 +297,7 @@ SQLite `tags` binding issues:
 - `examples/thread_create_in_run_func.py`
 - `examples/step_types.py`
 
-## 14. Release Checklist (v0.4.0)
+## 14. Release Checklist
 
 ```bash
 python3 -m py_compile examples/*.py
@@ -309,5 +308,5 @@ python3 -m twine check dist/*
 
 Also verify:
 
-- `pyproject.toml` version is `0.4.0`
+- `pyproject.toml` version matches the release tag
 - README/doc links resolve (`README.md`, `README.ko.md`, `docs/usage.en.md`, `docs/usage.ko.md`, `docs/api-reference.en.md`, `docs/api-reference.ko.md`)

@@ -1,8 +1,7 @@
-# Easierlit API Reference (v0.4.0)
+# Easierlit API Reference
 
 ## 1. Scope and Contract Notes
 
-- Version target: `0.4.0`
 - Runtime core: Chainlit (`chainlit>=2.9,<3`)
 - This document describes public APIs that are currently supported.
 - `EasierlitClient` is thread-worker only (`worker_mode="thread"`).

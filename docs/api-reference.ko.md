@@ -1,8 +1,7 @@
-# Easierlit API 레퍼런스 (v0.4.0)
+# Easierlit API 레퍼런스
 
 ## 1. 범위와 계약 표기
 
-- 대상 버전: `0.4.0`
 - 런타임 코어: Chainlit (`chainlit>=2.9,<3`)
 - 본 문서는 현재 공개 API만 다룹니다.
 - `EasierlitClient`는 thread 워커만 지원합니다(`worker_mode="thread"`).

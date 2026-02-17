@@ -2,7 +2,6 @@
 
 # Easierlit
 
-[![Version](https://img.shields.io/badge/version-0.4.0-2563eb)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-0ea5e9)](pyproject.toml)
 [![Chainlit](https://img.shields.io/badge/chainlit-2.9%20to%203-10b981)](https://docs.chainlit.io)
 
@@ -114,7 +113,7 @@ server = EasierlitServer(client=client)
 server.serve()
 ```
 
-## Public API (v0.4.0)
+## Public API
 
 ```python
 EasierlitServer(
@@ -245,7 +244,7 @@ Tool/run family includes:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.4.0 mapping:
+Easierlit mapping:
 
 - `app.add_message(...)` -> `assistant_message`
 - `app.add_tool(...)` / `app.update_tool(...)` -> `tool`
@@ -270,7 +269,7 @@ Easierlit v0.4.0 mapping:
 
 ## Migration Note
 
-v0.4.0 API updates:
+API updates:
 
 - `new_thread(thread_id=..., ...)` -> `thread_id = new_thread(...)`
 - `send(...)` was removed.

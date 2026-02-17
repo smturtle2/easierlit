@@ -2,7 +2,6 @@
 
 # Easierlit
 
-[![Version](https://img.shields.io/badge/version-0.4.0-2563eb)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-0ea5e9)](pyproject.toml)
 [![Chainlit](https://img.shields.io/badge/chainlit-2.9%20to%203-10b981)](https://docs.chainlit.io)
 
@@ -114,7 +113,7 @@ server = EasierlitServer(client=client)
 server.serve()
 ```
 
-## 공개 API (v0.4.0)
+## 공개 API
 
 ```python
 EasierlitServer(
@@ -245,7 +244,7 @@ Tool/run 계열:
 
 - `tool`, `run`, `llm`, `embedding`, `retrieval`, `rerank`, `undefined`
 
-Easierlit v0.4.0 매핑:
+Easierlit 매핑:
 
 - `app.add_message(...)` -> `assistant_message`
 - `app.add_tool(...)` / `app.update_tool(...)` -> `tool`
@@ -270,7 +269,7 @@ Easierlit v0.4.0 매핑:
 
 ## 마이그레이션 노트
 
-v0.4.0 API 변경:
+API 변경:
 
 - `new_thread(thread_id=..., ...)` -> `thread_id = new_thread(...)`
 - `send(...)` 제거
