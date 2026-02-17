@@ -94,7 +94,11 @@ EasierlitApp.delete_thread(thread_id)
 EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
-EasierlitPersistenceConfig(enabled=True, sqlite_path=".chainlit/easierlit.db")
+EasierlitPersistenceConfig(
+    enabled=True,
+    sqlite_path=".chainlit/easierlit.db",
+    storage_provider=None,
+)
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
 
@@ -105,8 +109,9 @@ Easierlit server enforces these defaults:
 - Chainlit headless mode enabled.
 - Sidebar default state forced to `open`.
 - CoT mode forced to `full`.
-- `CHAINLIT_AUTH_COOKIE_NAME=easierlit_access_token`.
-- JWT secret auto-managed in `.chainlit/jwt.secret`.
+- `CHAINLIT_AUTH_COOKIE_NAME` is preserved if already set; otherwise Easierlit sets `easierlit_access_token_<hash>`.
+- `CHAINLIT_AUTH_SECRET` is preserved if already set; otherwise Easierlit auto-manages `.chainlit/jwt.secret`.
+- Easierlit restores previous `CHAINLIT_AUTH_COOKIE_NAME` and `CHAINLIT_AUTH_SECRET` after shutdown.
 - `run_func` fail-fast: worker exception triggers server shutdown.
 - Discord integration is disabled by default during `serve()`, even if `DISCORD_BOT_TOKEN` is already set.
 
@@ -120,6 +125,7 @@ Default behavior when omitted:
 - fallback `admin` / `admin` (warning log emitted).
 - setting only one of `EASIERLIT_AUTH_USERNAME` or `EASIERLIT_AUTH_PASSWORD` raises `ValueError`.
 - `persistence=None`: default SQLite persistence is enabled at `.chainlit/easierlit.db`.
+- File/image element persistence requires `persistence.storage_provider`.
 
 Auth setup example:
 
@@ -144,6 +150,7 @@ from easierlit import EasierlitPersistenceConfig, EasierlitServer
 persistence = EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
+    storage_provider=None,  # Set a Chainlit BaseStorageClient to persist file/image elements.
 )
 
 server = EasierlitServer(client=client, persistence=persistence)
@@ -281,7 +288,7 @@ UI option reference (Chainlit): `ui.cot` supports `full`, `tool_call`, `hidden`.
 `Invalid authentication token` after config changes:
 
 - Meaning: stale browser token or secret mismatch.
-- Action: restart server and login again (cookie name is `easierlit_access_token`).
+- Action: restart server and login again (`CHAINLIT_AUTH_COOKIE_NAME` may be custom or `easierlit_access_token_<hash>`).
 
 SQLite `tags` binding issues:
 

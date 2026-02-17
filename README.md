@@ -26,7 +26,7 @@ It keeps the power of Chainlit while reducing the boilerplate for worker loops, 
 - headless server mode
 - sidebar default state `open`
 - JWT secret auto-management (`.chainlit/jwt.secret`)
-- dedicated auth cookie (`easierlit_access_token`)
+- scoped auth cookie default (`easierlit_access_token_<hash>`)
 - fail-fast worker policy
 - Practical persistence behavior:
 - default SQLite bootstrap (`.chainlit/easierlit.db`)
@@ -146,7 +146,11 @@ EasierlitApp.delete_thread(thread_id)
 EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
-EasierlitPersistenceConfig(enabled=True, sqlite_path=".chainlit/easierlit.db")
+EasierlitPersistenceConfig(
+    enabled=True,
+    sqlite_path=".chainlit/easierlit.db",
+    storage_provider=None,
+)
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
 
@@ -158,13 +162,15 @@ This includes parameter constraints, return semantics, exceptions, side effects,
 
 ## Auth and Persistence Defaults
 
-- JWT secret: auto-managed at `.chainlit/jwt.secret`
-- Auth cookie: `easierlit_access_token`
+- JWT secret: auto-managed at `.chainlit/jwt.secret` when `CHAINLIT_AUTH_SECRET` is not set
+- Auth cookie: keeps `CHAINLIT_AUTH_COOKIE_NAME` when set, otherwise uses scoped default `easierlit_access_token_<hash>`
+- On shutdown, Easierlit restores the previous `CHAINLIT_AUTH_COOKIE_NAME` and `CHAINLIT_AUTH_SECRET`
 - Default auth is enabled when `auth=None`
 - Auth credential order for `auth=None`:
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` (must be set together)
 - fallback to `admin` / `admin` (warning log emitted)
 - Default persistence: SQLite at `.chainlit/easierlit.db`
+- File/image element persistence requires `EasierlitPersistenceConfig(storage_provider=...)`
 - If SQLite schema is incompatible, Easierlit recreates DB with backup
 - Sidebar default state is forced to `open`
 - Discord integration is disabled by default during `serve()`, even if `DISCORD_BOT_TOKEN` already exists.
@@ -178,6 +184,7 @@ Typical Easierlit setup:
 
 - keep `auth=None` and `persistence=None` for default enabled auth + persistence
 - optionally set `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` for non-default credentials
+- pass `persistence=EasierlitPersistenceConfig(storage_provider=...)` when your app needs file/image element persistence
 - or pass explicit `auth=EasierlitAuthConfig(...)`
 
 Discord bot setup:

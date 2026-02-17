@@ -94,7 +94,11 @@ EasierlitApp.delete_thread(thread_id)
 EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
-EasierlitPersistenceConfig(enabled=True, sqlite_path=".chainlit/easierlit.db")
+EasierlitPersistenceConfig(
+    enabled=True,
+    sqlite_path=".chainlit/easierlit.db",
+    storage_provider=None,
+)
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
 
@@ -105,8 +109,9 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 - Chainlit headless 모드 활성
 - sidebar 기본 상태 `open`
 - CoT 모드 `full` 강제
-- `CHAINLIT_AUTH_COOKIE_NAME=easierlit_access_token`
-- JWT secret 자동 관리(`.chainlit/jwt.secret`)
+- `CHAINLIT_AUTH_COOKIE_NAME`가 이미 있으면 유지, 없으면 `easierlit_access_token_<hash>`를 설정
+- `CHAINLIT_AUTH_SECRET`가 이미 있으면 유지, 없으면 `.chainlit/jwt.secret`를 자동 관리
+- 종료 시 Easierlit이 `CHAINLIT_AUTH_COOKIE_NAME`/`CHAINLIT_AUTH_SECRET`를 이전 값으로 복원
 - `run_func` fail-fast: 워커 예외 시 서버 종료 트리거
 - `serve()` 실행 중 Discord 연동은 기본 비활성(`DISCORD_BOT_TOKEN`이 이미 있어도 비활성)
 
@@ -120,6 +125,7 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 - 폴백 `admin` / `admin` (경고 로그 출력)
 - `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 중 하나만 설정하면 `ValueError`가 발생합니다.
 - `persistence=None`: 기본 SQLite 영속성(`.chainlit/easierlit.db`)이 활성화됩니다.
+- 파일/이미지 element 영속화가 필요하면 `persistence.storage_provider`를 설정해야 합니다.
 
 인증 설정 예시:
 
@@ -144,6 +150,7 @@ from easierlit import EasierlitPersistenceConfig, EasierlitServer
 persistence = EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
+    storage_provider=None,  # 파일/이미지 element를 저장하려면 Chainlit BaseStorageClient를 지정하세요.
 )
 
 server = EasierlitServer(client=client, persistence=persistence)
@@ -281,7 +288,7 @@ UI 옵션 참고(Chainlit): `ui.cot`는 `full`, `tool_call`, `hidden`을 지원�
 설정 변경 후 `Invalid authentication token`:
 
 - 의미: 브라우저 토큰 stale 또는 secret mismatch
-- 조치: 서버 재시작 후 재로그인(`easierlit_access_token` 사용)
+- 조치: 서버 재시작 후 재로그인(`CHAINLIT_AUTH_COOKIE_NAME`는 사용자 지정값이거나 `easierlit_access_token_<hash>`일 수 있음)
 
 SQLite `tags` 바인딩 이슈:
 

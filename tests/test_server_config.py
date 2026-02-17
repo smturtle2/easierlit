@@ -1,4 +1,5 @@
 import os
+import re
 import signal
 
 import pytest
@@ -35,10 +36,16 @@ def _clear_default_auth_env():
         os.environ["EASIERLIT_AUTH_PASSWORD"] = previous_password
 
 
+def _is_scoped_cookie_name(value: str) -> bool:
+    return re.fullmatch(r"easierlit_access_token_[0-9a-f]{16}", value) is not None
+
+
 def test_serve_forces_headless_and_sidebar():
     called = {"count": 0, "target": None}
     generated_secret = "s" * 64
     fake_env: dict[str, str] = {}
+    observed = {"cookie_name": None, "secret": None}
+    config.ui.cot = "tool_call"
 
     def fake_run_chainlit(target: str):
         called["count"] += 1
@@ -51,6 +58,10 @@ def test_serve_forces_headless_and_sidebar():
         assert runtime.get_auth() is not None
         assert runtime.get_persistence() is not None
         assert runtime.get_persistence().sqlite_path == ".chainlit/test.db"
+        observed["cookie_name"] = fake_env["CHAINLIT_AUTH_COOKIE_NAME"]
+        observed["secret"] = fake_env["CHAINLIT_AUTH_SECRET"]
+        assert _is_scoped_cookie_name(fake_env["CHAINLIT_AUTH_COOKIE_NAME"])
+        assert fake_env["CHAINLIT_AUTH_SECRET"] == generated_secret
 
     client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
     auth = EasierlitAuthConfig(
@@ -76,9 +87,102 @@ def test_serve_forces_headless_and_sidebar():
     assert fake_env["CHAINLIT_HOST"] == "0.0.0.0"
     assert fake_env["CHAINLIT_PORT"] == "9000"
     assert fake_env["CHAINLIT_ROOT_PATH"] == "/custom"
-    assert fake_env["CHAINLIT_AUTH_COOKIE_NAME"] == "easierlit_access_token"
-    assert fake_env["CHAINLIT_AUTH_SECRET"] == generated_secret
-    assert len(fake_env["CHAINLIT_AUTH_SECRET"].encode("utf-8")) >= 32
+    assert _is_scoped_cookie_name(observed["cookie_name"])
+    assert observed["secret"] == generated_secret
+    assert len(observed["secret"].encode("utf-8")) >= 32
+    assert "CHAINLIT_AUTH_COOKIE_NAME" not in fake_env
+    assert "CHAINLIT_AUTH_SECRET" not in fake_env
+
+
+def test_serve_keeps_existing_chainlit_auth_env_and_skips_secret_generation():
+    fake_env = {
+        "CHAINLIT_AUTH_COOKIE_NAME": "external_cookie",
+        "CHAINLIT_AUTH_SECRET": "external_secret",
+    }
+    provider_called = {"count": 0}
+
+    def fake_jwt_secret_provider() -> str:
+        provider_called["count"] += 1
+        return "generated_secret"
+
+    def fake_run_chainlit(_target: str):
+        assert fake_env["CHAINLIT_AUTH_COOKIE_NAME"] == "external_cookie"
+        assert fake_env["CHAINLIT_AUTH_SECRET"] == "external_secret"
+
+    client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
+    server = EasierlitServer(
+        client=client,
+        run_chainlit_fn=fake_run_chainlit,
+        jwt_secret_provider=fake_jwt_secret_provider,
+        environ=fake_env,
+    )
+    server.serve()
+
+    assert provider_called["count"] == 0
+    assert fake_env["CHAINLIT_AUTH_COOKIE_NAME"] == "external_cookie"
+    assert fake_env["CHAINLIT_AUTH_SECRET"] == "external_secret"
+
+
+def test_default_cookie_name_varies_by_host_port_root_path_scope():
+    observed_cookie_names: list[str] = []
+    fake_env: dict[str, str] = {}
+
+    def _run_and_capture(host: str, port: int, root_path: str):
+        def fake_run_chainlit(_target: str):
+            observed_cookie_names.append(fake_env["CHAINLIT_AUTH_COOKIE_NAME"])
+
+        client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
+        server = EasierlitServer(
+            client=client,
+            host=host,
+            port=port,
+            root_path=root_path,
+            run_chainlit_fn=fake_run_chainlit,
+            jwt_secret_provider=lambda: "x" * 64,
+            environ=fake_env,
+        )
+        server.serve()
+        assert "CHAINLIT_AUTH_COOKIE_NAME" not in fake_env
+        assert "CHAINLIT_AUTH_SECRET" not in fake_env
+
+    _run_and_capture(host="127.0.0.1", port=8000, root_path="")
+    _run_and_capture(host="127.0.0.1", port=8001, root_path="")
+    _run_and_capture(host="127.0.0.1", port=8001, root_path="/custom")
+
+    assert len(observed_cookie_names) == 3
+    assert _is_scoped_cookie_name(observed_cookie_names[0])
+    assert _is_scoped_cookie_name(observed_cookie_names[1])
+    assert _is_scoped_cookie_name(observed_cookie_names[2])
+    assert observed_cookie_names[0] != observed_cookie_names[1]
+    assert observed_cookie_names[1] != observed_cookie_names[2]
+    assert observed_cookie_names[0] != observed_cookie_names[2]
+
+
+def test_blank_chainlit_auth_env_values_are_treated_as_missing_and_restored():
+    generated_secret = "s" * 64
+    fake_env = {
+        "CHAINLIT_AUTH_COOKIE_NAME": "",
+        "CHAINLIT_AUTH_SECRET": "   ",
+    }
+    observed = {"cookie_name": None, "secret": None}
+
+    def fake_run_chainlit(_target: str):
+        observed["cookie_name"] = fake_env["CHAINLIT_AUTH_COOKIE_NAME"]
+        observed["secret"] = fake_env["CHAINLIT_AUTH_SECRET"]
+
+    client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
+    server = EasierlitServer(
+        client=client,
+        run_chainlit_fn=fake_run_chainlit,
+        jwt_secret_provider=lambda: generated_secret,
+        environ=fake_env,
+    )
+    server.serve()
+
+    assert _is_scoped_cookie_name(observed["cookie_name"])
+    assert observed["secret"] == generated_secret
+    assert fake_env["CHAINLIT_AUTH_COOKIE_NAME"] == ""
+    assert fake_env["CHAINLIT_AUTH_SECRET"] == "   "
 
 
 def test_runtime_is_unbound_after_serve():

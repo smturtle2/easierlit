@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from chainlit.data.storage_clients.base import BaseStorageClient
 
 
 @dataclass(slots=True)
@@ -22,6 +25,7 @@ class EasierlitAuthConfig:
 class EasierlitPersistenceConfig:
     enabled: bool = True
     sqlite_path: str = ".chainlit/easierlit.db"
+    storage_provider: BaseStorageClient | Any | None = None
 
 
 @dataclass(slots=True)

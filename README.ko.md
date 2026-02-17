@@ -26,7 +26,7 @@ Chainlit의 코어 기능은 유지하면서 워커 루프, 메시지 흐름, �
 - headless 서버 실행
 - sidebar 기본 상태 `open`
 - JWT secret 자동관리 (`.chainlit/jwt.secret`)
-- 전용 auth cookie (`easierlit_access_token`)
+- 범위 기반 auth cookie 기본값 (`easierlit_access_token_<hash>`)
 - 워커 fail-fast 정책
 - 영속성 동작이 현실적입니다.
 - 기본 SQLite 부트스트랩 (`.chainlit/easierlit.db`)
@@ -146,7 +146,11 @@ EasierlitApp.delete_thread(thread_id)
 EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
-EasierlitPersistenceConfig(enabled=True, sqlite_path=".chainlit/easierlit.db")
+EasierlitPersistenceConfig(
+    enabled=True,
+    sqlite_path=".chainlit/easierlit.db",
+    storage_provider=None,
+)
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
 
@@ -158,13 +162,15 @@ EasierlitDiscordConfig(enabled=True, bot_token=None)
 
 ## 인증/영속성 기본값
 
-- JWT secret: `.chainlit/jwt.secret` 자동관리
-- 인증 cookie: `easierlit_access_token`
+- JWT secret: `CHAINLIT_AUTH_SECRET`가 없을 때 `.chainlit/jwt.secret` 자동관리
+- 인증 cookie: `CHAINLIT_AUTH_COOKIE_NAME`가 있으면 그대로 사용, 없으면 범위 기반 기본값 `easierlit_access_token_<hash>` 사용
+- 종료 시 Easierlit이 `CHAINLIT_AUTH_COOKIE_NAME`/`CHAINLIT_AUTH_SECRET`를 이전 값으로 복원
 - `auth=None`이면 기본 인증 자동 활성
 - `auth=None`일 때 인증 자격증명 해석 순서:
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` (둘 다 함께 설정 필요)
 - 폴백 `admin` / `admin` (경고 로그 출력)
 - 기본 persistence: `.chainlit/easierlit.db` (SQLite)
+- 파일/이미지 element 영속화가 필요하면 `EasierlitPersistenceConfig(storage_provider=...)` 설정 필요
 - SQLite 스키마 불일치 시 백업 후 재생성
 - sidebar 기본 상태는 `open`으로 강제
 - `serve()` 실행 중 Discord 연동은 기본 비활성입니다(`DISCORD_BOT_TOKEN`이 기존에 있어도 비활성).
@@ -178,6 +184,7 @@ Easierlit에서 일반적인 구성:
 
 - `auth=None`, `persistence=None`으로 기본 인증/영속성 활성 사용
 - 기본 계정을 쓰지 않으려면 `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 설정
+- 파일/이미지 element 영속화가 필요하면 `persistence=EasierlitPersistenceConfig(storage_provider=...)` 전달
 - 또는 `auth=EasierlitAuthConfig(...)`를 명시 전달
 
 Discord 봇 구성:

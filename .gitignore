@@ -35,9 +35,8 @@ htmlcov/
 # Logs
 *.log
 
-# Chainlit runtime artifacts (keep project config only)
+# Chainlit runtime artifacts
 .chainlit/*
-!.chainlit/config.toml
 
 # Local scratch
 .files/

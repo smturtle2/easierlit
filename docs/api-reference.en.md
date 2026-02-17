@@ -31,6 +31,7 @@ Parameters:
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` when both are present.
 - fallback `admin` / `admin` when both are absent (warning log emitted).
 - `persistence`: optional persistence config. If `None`, default SQLite bootstrap behavior is enabled.
+- `persistence.storage_provider`: optional Chainlit storage client for file/image element persistence.
 - `discord`: optional Discord bot config. Defaults to disabled behavior.
 
 ### 2.2 `EasierlitServer.serve`
@@ -46,9 +47,12 @@ Behavior:
 - Starts Chainlit in headless mode.
 - Forces sidebar default state to `open`.
 - Forces CoT mode to `full`.
+- Preserves `CHAINLIT_AUTH_COOKIE_NAME` when already set; otherwise sets deterministic scoped cookie name `easierlit_access_token_<hash>`.
+- Preserves `CHAINLIT_AUTH_SECRET` when already set; otherwise resolves secret from `.chainlit/jwt.secret`.
 - Resolves Discord token as `bot_token` first, then `DISCORD_BOT_TOKEN` fallback.
 - Runs Discord through Easierlit's own bridge (no runtime monkeypatching of Chainlit Discord handlers).
 - Keeps Chainlit's `DISCORD_BOT_TOKEN` startup path disabled during `serve()` and restores the previous env value on shutdown.
+- Restores previous `CHAINLIT_AUTH_COOKIE_NAME` and `CHAINLIT_AUTH_SECRET` after shutdown.
 - On shutdown, calls `client.stop()` and unbinds runtime.
 - Uses fail-fast policy on worker crash.
 
@@ -390,8 +394,12 @@ EasierlitAuthConfig(
 EasierlitPersistenceConfig(
     enabled: bool = True,
     sqlite_path: str = ".chainlit/easierlit.db",
+    storage_provider: BaseStorageClient | Any | None = None,
 )
 ```
+
+- `storage_provider` is forwarded to `SQLAlchemyDataLayer(storage_provider=...)`.
+- If `storage_provider` is `None`, file/image elements are not persisted.
 
 ### 5.3 `EasierlitDiscordConfig`
 

@@ -31,6 +31,7 @@ EasierlitServer(
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD`가 모두 있으면 해당 값 사용
 - 둘 다 없으면 `admin` / `admin` 폴백 사용 (경고 로그 출력)
 - `persistence`: 선택 영속성 설정. `None`이면 기본 SQLite 부트스트랩 정책 활성
+- `persistence.storage_provider`: 파일/이미지 element 영속화를 위한 선택 Chainlit storage client
 - `discord`: 선택 Discord 봇 설정 (기본은 비활성 정책)
 
 ### 2.2 `EasierlitServer.serve`
@@ -46,9 +47,12 @@ serve() -> None
 - Chainlit headless 실행
 - sidebar 기본 상태를 `open`으로 강제
 - CoT 모드를 `full`로 강제
+- `CHAINLIT_AUTH_COOKIE_NAME`가 이미 있으면 유지, 없으면 결정적 범위 기반 cookie 이름 `easierlit_access_token_<hash>` 설정
+- `CHAINLIT_AUTH_SECRET`가 이미 있으면 유지, 없으면 `.chainlit/jwt.secret`에서 secret을 해석
 - Discord 토큰 해석 순서: `bot_token` 우선, 없으면 `DISCORD_BOT_TOKEN` 폴백
 - Chainlit Discord handler를 런타임 monkeypatch하지 않고 Easierlit 자체 Discord bridge를 사용
 - `serve()` 동안 Chainlit의 `DISCORD_BOT_TOKEN` startup 경로를 비활성으로 유지하고 종료 시 기존 env 값을 복원
+- 종료 시 `CHAINLIT_AUTH_COOKIE_NAME`/`CHAINLIT_AUTH_SECRET`도 기존 env 값으로 복원
 - 종료 시 `client.stop()` 호출 후 runtime unbind
 - 워커 크래시에 대해 fail-fast 정책 적용
 
@@ -390,8 +394,12 @@ EasierlitAuthConfig(
 EasierlitPersistenceConfig(
     enabled: bool = True,
     sqlite_path: str = ".chainlit/easierlit.db",
+    storage_provider: BaseStorageClient | Any | None = None,
 )
 ```
+
+- `storage_provider`는 `SQLAlchemyDataLayer(storage_provider=...)`로 전달됩니다.
+- `storage_provider`가 `None`이면 파일/이미지 element는 영속화되지 않습니다.
 
 ### 5.3 `EasierlitDiscordConfig`
 

@@ -128,12 +128,21 @@ def _register_default_data_layer_if_needed() -> None:
     persistence = RUNTIME.get_persistence() or EasierlitPersistenceConfig()
     db_path = ensure_sqlite_schema(persistence.sqlite_path).resolve()
     conninfo = f"sqlite+aiosqlite:///{db_path}"
+    storage_provider = persistence.storage_provider
+
+    if storage_provider is None:
+        LOGGER.warning(
+            "Easierlit default SQLite data layer is running without a storage provider. "
+            "File/image elements will not be persisted. If your app does not use file/image "
+            "elements, this warning can be ignored. To persist elements, pass "
+            "EasierlitPersistenceConfig(storage_provider=...)."
+        )
 
     @cl.data_layer
     def _easierlit_default_data_layer():
         from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
 
-        return SQLAlchemyDataLayer(conninfo=conninfo)
+        return SQLAlchemyDataLayer(conninfo=conninfo, storage_provider=storage_provider)
 
     LOGGER.info("Easierlit default SQLite data layer enabled at %s", db_path)
 

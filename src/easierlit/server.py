@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import signal
@@ -18,6 +19,8 @@ _DEFAULT_AUTH_USERNAME = "admin"
 _DEFAULT_AUTH_PASSWORD = "admin"
 _AUTH_USERNAME_ENV = "EASIERLIT_AUTH_USERNAME"
 _AUTH_PASSWORD_ENV = "EASIERLIT_AUTH_PASSWORD"
+_CHAINLIT_AUTH_COOKIE_NAME_ENV = "CHAINLIT_AUTH_COOKIE_NAME"
+_CHAINLIT_AUTH_SECRET_ENV = "CHAINLIT_AUTH_SECRET"
 
 
 class EasierlitServer:
@@ -58,6 +61,8 @@ class EasierlitServer:
         shutdown_requested = threading.Event()
 
         previous_discord_token = self._environ.get("DISCORD_BOT_TOKEN")
+        previous_auth_cookie_name = self._environ.get(_CHAINLIT_AUTH_COOKIE_NAME_ENV)
+        previous_auth_secret = self._environ.get(_CHAINLIT_AUTH_SECRET_ENV)
         resolved_discord_token = self._resolve_discord_token(previous_discord_token)
 
         runtime.bind(
@@ -102,8 +107,12 @@ class EasierlitServer:
             self._environ["CHAINLIT_HOST"] = self.host
             self._environ["CHAINLIT_PORT"] = str(self.port)
             self._environ["CHAINLIT_ROOT_PATH"] = self.root_path
-            self._environ["CHAINLIT_AUTH_COOKIE_NAME"] = "easierlit_access_token"
-            self._environ["CHAINLIT_AUTH_SECRET"] = self._jwt_secret_provider()
+            self._environ[_CHAINLIT_AUTH_COOKIE_NAME_ENV] = self._resolve_chainlit_auth_cookie_name(
+                previous_auth_cookie_name
+            )
+            self._environ[_CHAINLIT_AUTH_SECRET_ENV] = self._resolve_chainlit_auth_secret(
+                previous_auth_secret
+            )
 
             # Easierlit policy: always run headless, always keep sidebar open, and show full CoT.
             config.run.headless = True
@@ -113,10 +122,9 @@ class EasierlitServer:
             entrypoint = self._entrypoint_path()
             self._run_chainlit_fn(str(entrypoint))
         finally:
-            if previous_discord_token is None:
-                self._environ.pop("DISCORD_BOT_TOKEN", None)
-            else:
-                self._environ["DISCORD_BOT_TOKEN"] = previous_discord_token
+            self._restore_env_var("DISCORD_BOT_TOKEN", previous_discord_token)
+            self._restore_env_var(_CHAINLIT_AUTH_COOKIE_NAME_ENV, previous_auth_cookie_name)
+            self._restore_env_var(_CHAINLIT_AUTH_SECRET_ENV, previous_auth_secret)
 
             self.client.set_worker_crash_handler(None)
             self.client.stop()
@@ -130,6 +138,32 @@ class EasierlitServer:
 
     def _entrypoint_path(self) -> Path:
         return Path(__file__).resolve().parent / "chainlit_entry.py"
+
+    def _resolve_chainlit_auth_cookie_name(self, current_value: str | None) -> str:
+        if current_value is not None and current_value.strip():
+            return current_value
+
+        scope_text = "|".join(
+            [
+                str(Path.cwd().resolve()),
+                str(self.host),
+                str(self.port),
+                str(self.root_path),
+            ]
+        )
+        scope_hash = hashlib.sha256(scope_text.encode("utf-8")).hexdigest()[:16]
+        return f"easierlit_access_token_{scope_hash}"
+
+    def _resolve_chainlit_auth_secret(self, current_value: str | None) -> str:
+        if current_value is not None and current_value.strip():
+            return current_value
+        return self._jwt_secret_provider()
+
+    def _restore_env_var(self, key: str, previous_value: str | None) -> None:
+        if previous_value is None:
+            self._environ.pop(key, None)
+            return
+        self._environ[key] = previous_value
 
     def _resolve_auth(self, auth: EasierlitAuthConfig | None) -> EasierlitAuthConfig:
         if auth is not None:
