@@ -31,7 +31,7 @@ Parameters:
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` when both are present.
 - fallback `admin` / `admin` when both are absent (warning log emitted).
 - `persistence`: optional persistence config. If `None`, default SQLite bootstrap behavior is enabled.
-- `persistence.storage_provider`: optional Chainlit storage client for file/image element persistence.
+- `persistence.storage_provider`: optional Chainlit storage client override for file/image persistence. By default, Easierlit always auto-builds `S3StorageClient`.
 - `discord`: optional Discord bot config. Defaults to disabled behavior.
 
 ### 2.2 `EasierlitServer.serve`
@@ -394,12 +394,14 @@ EasierlitAuthConfig(
 EasierlitPersistenceConfig(
     enabled: bool = True,
     sqlite_path: str = ".chainlit/easierlit.db",
-    storage_provider: BaseStorageClient | Any | None = None,
+    storage_provider: BaseStorageClient | Any | None = <auto S3StorageClient>,
 )
 ```
 
 - `storage_provider` is forwarded to `SQLAlchemyDataLayer(storage_provider=...)`.
-- If `storage_provider` is `None`, file/image elements are not persisted.
+- Default `storage_provider` is `S3StorageClient`.
+- Bucket resolution order: `EASIERLIT_S3_BUCKET`, `BUCKET_NAME`, then fallback `easierlit-default`.
+- If `storage_provider=None` is explicitly passed, file/image elements are not persisted.
 
 ### 5.3 `EasierlitDiscordConfig`
 

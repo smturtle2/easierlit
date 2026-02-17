@@ -149,7 +149,7 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=None,
+    storage_provider=<auto S3StorageClient>,
 )
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
@@ -169,8 +169,9 @@ This includes parameter constraints, return semantics, exceptions, side effects,
 - Auth credential order for `auth=None`:
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` (must be set together)
 - fallback to `admin` / `admin` (warning log emitted)
-- Default persistence: SQLite at `.chainlit/easierlit.db`
-- File/image element persistence requires `EasierlitPersistenceConfig(storage_provider=...)`
+- Default persistence: SQLite at `.chainlit/easierlit.db` (threads + text steps)
+- Default file/image storage: `S3StorageClient` is always enabled by default
+- Default S3 bucket: `EASIERLIT_S3_BUCKET` or `BUCKET_NAME`, fallback `easierlit-default`
 - If SQLite schema is incompatible, Easierlit recreates DB with backup
 - Sidebar default state is forced to `open`
 - Discord integration is disabled by default during `serve()`, even if `DISCORD_BOT_TOKEN` already exists.
@@ -184,7 +185,8 @@ Typical Easierlit setup:
 
 - keep `auth=None` and `persistence=None` for default enabled auth + persistence
 - optionally set `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` for non-default credentials
-- pass `persistence=EasierlitPersistenceConfig(storage_provider=...)` when your app needs file/image element persistence
+- set `EASIERLIT_S3_BUCKET` (or `BUCKET_NAME`) to override the default S3 bucket name
+- pass `persistence=EasierlitPersistenceConfig(storage_provider=...)` to override storage backend
 - or pass explicit `auth=EasierlitAuthConfig(...)`
 
 Discord bot setup:

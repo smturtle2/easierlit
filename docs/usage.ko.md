@@ -97,7 +97,7 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=None,
+    storage_provider=<auto S3StorageClient>,
 )
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
@@ -125,7 +125,8 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 - 폴백 `admin` / `admin` (경고 로그 출력)
 - `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 중 하나만 설정하면 `ValueError`가 발생합니다.
 - `persistence=None`: 기본 SQLite 영속성(`.chainlit/easierlit.db`)이 활성화됩니다.
-- 파일/이미지 element 영속화가 필요하면 `persistence.storage_provider`를 설정해야 합니다.
+- 파일/이미지 저장소는 기본으로 항상 `S3StorageClient`를 사용합니다.
+- bucket 해석 순서: `EASIERLIT_S3_BUCKET` -> `BUCKET_NAME` -> `easierlit-default`.
 
 인증 설정 예시:
 
@@ -150,7 +151,7 @@ from easierlit import EasierlitPersistenceConfig, EasierlitServer
 persistence = EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=None,  # 파일/이미지 element를 저장하려면 Chainlit BaseStorageClient를 지정하세요.
+    storage_provider=None,  # 선택 override. `None`을 명시하면 파일/이미지 영속화를 비활성화합니다.
 )
 
 server = EasierlitServer(client=client, persistence=persistence)

@@ -31,7 +31,7 @@ EasierlitServer(
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD`가 모두 있으면 해당 값 사용
 - 둘 다 없으면 `admin` / `admin` 폴백 사용 (경고 로그 출력)
 - `persistence`: 선택 영속성 설정. `None`이면 기본 SQLite 부트스트랩 정책 활성
-- `persistence.storage_provider`: 파일/이미지 element 영속화를 위한 선택 Chainlit storage client
+- `persistence.storage_provider`: 파일/이미지 영속화를 위한 선택 Chainlit storage client override. 기본은 항상 `S3StorageClient` 자동 구성
 - `discord`: 선택 Discord 봇 설정 (기본은 비활성 정책)
 
 ### 2.2 `EasierlitServer.serve`
@@ -394,12 +394,14 @@ EasierlitAuthConfig(
 EasierlitPersistenceConfig(
     enabled: bool = True,
     sqlite_path: str = ".chainlit/easierlit.db",
-    storage_provider: BaseStorageClient | Any | None = None,
+    storage_provider: BaseStorageClient | Any | None = <auto S3StorageClient>,
 )
 ```
 
 - `storage_provider`는 `SQLAlchemyDataLayer(storage_provider=...)`로 전달됩니다.
-- `storage_provider`가 `None`이면 파일/이미지 element는 영속화되지 않습니다.
+- 기본 `storage_provider`는 `S3StorageClient`입니다.
+- bucket 해석 순서: `EASIERLIT_S3_BUCKET`, `BUCKET_NAME`, 미설정 시 `easierlit-default`.
+- `storage_provider=None`을 명시하면 파일/이미지 element는 영속화되지 않습니다.
 
 ### 5.3 `EasierlitDiscordConfig`
 

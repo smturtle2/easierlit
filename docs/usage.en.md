@@ -97,7 +97,7 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=None,
+    storage_provider=<auto S3StorageClient>,
 )
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
@@ -125,7 +125,8 @@ Default behavior when omitted:
 - fallback `admin` / `admin` (warning log emitted).
 - setting only one of `EASIERLIT_AUTH_USERNAME` or `EASIERLIT_AUTH_PASSWORD` raises `ValueError`.
 - `persistence=None`: default SQLite persistence is enabled at `.chainlit/easierlit.db`.
-- File/image element persistence requires `persistence.storage_provider`.
+- Default file/image storage always uses `S3StorageClient`.
+- Bucket resolution order: `EASIERLIT_S3_BUCKET` -> `BUCKET_NAME` -> `easierlit-default`.
 
 Auth setup example:
 
@@ -150,7 +151,7 @@ from easierlit import EasierlitPersistenceConfig, EasierlitServer
 persistence = EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=None,  # Set a Chainlit BaseStorageClient to persist file/image elements.
+    storage_provider=None,  # Optional override. `None` explicitly disables file/image storage persistence.
 )
 
 server = EasierlitServer(client=client, persistence=persistence)

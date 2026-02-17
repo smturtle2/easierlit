@@ -149,7 +149,7 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=None,
+    storage_provider=<auto S3StorageClient>,
 )
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
@@ -169,8 +169,9 @@ EasierlitDiscordConfig(enabled=True, bot_token=None)
 - `auth=None`일 때 인증 자격증명 해석 순서:
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` (둘 다 함께 설정 필요)
 - 폴백 `admin` / `admin` (경고 로그 출력)
-- 기본 persistence: `.chainlit/easierlit.db` (SQLite)
-- 파일/이미지 element 영속화가 필요하면 `EasierlitPersistenceConfig(storage_provider=...)` 설정 필요
+- 기본 persistence: `.chainlit/easierlit.db` (SQLite, thread/텍스트 step 저장)
+- 기본 파일/이미지 저장소: `S3StorageClient`가 항상 기본 활성화
+- 기본 S3 bucket: `EASIERLIT_S3_BUCKET` 또는 `BUCKET_NAME`, 미설정 시 `easierlit-default`
 - SQLite 스키마 불일치 시 백업 후 재생성
 - sidebar 기본 상태는 `open`으로 강제
 - `serve()` 실행 중 Discord 연동은 기본 비활성입니다(`DISCORD_BOT_TOKEN`이 기존에 있어도 비활성).
@@ -184,7 +185,8 @@ Easierlit에서 일반적인 구성:
 
 - `auth=None`, `persistence=None`으로 기본 인증/영속성 활성 사용
 - 기본 계정을 쓰지 않으려면 `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 설정
-- 파일/이미지 element 영속화가 필요하면 `persistence=EasierlitPersistenceConfig(storage_provider=...)` 전달
+- 기본 S3 bucket 이름을 바꾸려면 `EASIERLIT_S3_BUCKET`(또는 `BUCKET_NAME`) 설정
+- 다른 저장소를 쓰려면 `persistence=EasierlitPersistenceConfig(storage_provider=...)` 전달
 - 또는 `auth=EasierlitAuthConfig(...)`를 명시 전달
 
 Discord 봇 구성:

@@ -134,7 +134,9 @@ def _register_default_data_layer_if_needed() -> None:
         LOGGER.warning(
             "Easierlit default SQLite data layer is running without a storage provider. "
             "File/image elements will not be persisted. If your app does not use file/image "
-            "elements, this warning can be ignored. To persist elements, pass "
+            "elements, this warning can be ignored. Easierlit normally enables default "
+            "S3StorageClient automatically. To persist elements, remove explicit "
+            "storage_provider=None or pass "
             "EasierlitPersistenceConfig(storage_provider=...)."
         )
 
