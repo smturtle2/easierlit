@@ -316,3 +316,62 @@ def test_send_outgoing_command_sends_message_and_tool_prefix():
     assert message_result is True
     assert tool_result is True
     assert channel.messages == ["hello", "[Search] running"]
+
+
+def test_send_outgoing_command_returns_false_for_unsupported_command():
+    fake_client = _FakeDiscordClient()
+    channel = _FakeSendChannel()
+    fake_client._channels[123] = channel
+
+    bridge = EasierlitDiscordBridge(
+        runtime=RuntimeRegistry(),
+        bot_token="token",
+        client=fake_client,
+    )
+
+    unsupported = SimpleNamespace(
+        command="update_message",
+        thread_id="thread-1",
+        content="hello",
+        author="Assistant",
+    )
+    result = asyncio.run(bridge.send_outgoing_command(123, unsupported))
+
+    assert result is False
+    assert channel.messages == []
+
+
+def test_send_outgoing_command_fetches_channel_when_cache_misses():
+    class _FetchOnlyClient(_FakeDiscordClient):
+        def __init__(self):
+            super().__init__()
+            self.fetch_calls = 0
+
+        def get_channel(self, _channel_id: int):
+            return None
+
+        async def fetch_channel(self, channel_id: int):
+            self.fetch_calls += 1
+            return self._channels.get(channel_id)
+
+    fake_client = _FetchOnlyClient()
+    channel = _FakeSendChannel()
+    fake_client._channels[456] = channel
+
+    bridge = EasierlitDiscordBridge(
+        runtime=RuntimeRegistry(),
+        bot_token="token",
+        client=fake_client,
+    )
+
+    add_message = SimpleNamespace(
+        command="add_message",
+        thread_id="thread-1",
+        content="hello",
+        author="Assistant",
+    )
+    result = asyncio.run(bridge.send_outgoing_command(456, add_message))
+
+    assert result is True
+    assert fake_client.fetch_calls == 1
+    assert channel.messages == ["hello"]

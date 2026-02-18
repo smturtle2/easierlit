@@ -298,7 +298,10 @@ get_messages(thread_id: str) -> dict
 - `get_thread(thread_id)`로 대상 thread를 조회
 - `thread["steps"]` 원래 순서를 그대로 유지
 - dict 형태 step 중 `user_message`, `assistant_message`, `system_message`, `tool` 타입만 유지
-- `thread["elements"]`를 `forId` 기준으로 각 message에 매핑
+- `thread["elements"]`를 `forId` 별칭(`forId`, `for_id`, `stepId`, `step_id`) 기준으로 각 message에 매핑
+- 반환되는 각 element에 `has_source`와 `source` 메타데이터를 추가
+- `source.kind` 값: `url`, `path`, `bytes`, `objectKey`, `chainlitKey`
+- `url`이 비어 있고 `objectKey`가 있으면 data-layer storage provider를 통해 URL 복구를 시도
 - 반환 형식:
 - `thread`: `steps`를 제외한 thread 메타데이터
 - `messages`: `elements`를 포함한 메시지/도구 step 순서 보존 단일 목록
@@ -402,7 +405,9 @@ EasierlitPersistenceConfig(
 
 - `storage_provider`는 `SQLAlchemyDataLayer(storage_provider=...)`로 전달됩니다.
 - 기본 `storage_provider`는 `LocalFileStorageClient`입니다.
-- 기본 로컬 저장 경로는 `public/easierlit`입니다.
+- 기본 로컬 저장 경로는 `<CHAINLIT_APP_ROOT 또는 cwd>/public/easierlit`입니다.
+- `LocalFileStorageClient(base_dir=...)`는 반드시 `<CHAINLIT_APP_ROOT 또는 cwd>/public` 하위여야 하며, 아니면 `ValueError`를 발생시킵니다.
+- 생성되는 로컬 파일/이미지 URL은 `CHAINLIT_PARENT_ROOT_PATH`와 `CHAINLIT_ROOT_PATH`를 함께 반영합니다.
 - `enabled=True`에서는 유효한 `LocalFileStorageClient`가 필수이며, `None` 또는 비-local provider는 설정 오류를 발생시킵니다.
 - 기본 persistence 경로에서는 startup에 local storage upload/read/delete preflight를 수행합니다.
 

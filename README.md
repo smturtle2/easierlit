@@ -172,7 +172,9 @@ This includes parameter constraints, return semantics, exceptions, side effects,
 - fallback to `admin` / `admin` (warning log emitted)
 - Default persistence: SQLite at `.chainlit/easierlit.db` (threads + text steps)
 - Default file/image storage: `LocalFileStorageClient` is always enabled by default
-- Default local storage path: `public/easierlit`
+- Default local storage path: `<CHAINLIT_APP_ROOT or cwd>/public/easierlit`
+- `LocalFileStorageClient(base_dir=...)` must stay inside `<CHAINLIT_APP_ROOT or cwd>/public`
+- Local file/image URLs include both `CHAINLIT_PARENT_ROOT_PATH` and `CHAINLIT_ROOT_PATH` prefixes
 - If SQLite schema is incompatible, Easierlit recreates DB with backup
 - Sidebar default state is forced to `open`
 - Discord integration is disabled by default during `serve()`, even if `DISCORD_BOT_TOKEN` already exists.
@@ -226,7 +228,8 @@ Behavior highlights:
 - `app.add_thought(...)` is the same tool-call path with fixed tool name `Reasoning`.
 - `app.get_messages(...)` returns thread metadata plus one ordered `messages` list.
 - `app.get_messages(...)` includes `user_message`/`assistant_message`/`system_message`/`tool` and excludes run-family steps.
-- `app.get_messages(...)` maps `thread["elements"]` into each message via `forId`, so image/file elements are available per message.
+- `app.get_messages(...)` maps `thread["elements"]` into each message via `forId` aliases (`forId`/`for_id`/`stepId`/`step_id`).
+- `app.get_messages(...)` adds `elements[*].has_source` and `elements[*].source` (`url`/`path`/`bytes`/`objectKey`/`chainlitKey`) for image/file source tracing.
 - `app.new_thread(...)` auto-generates a unique `thread_id` and returns it.
 - `app.update_thread(...)` updates only when thread already exists.
 - With auth enabled, both `app.new_thread(...)` and `app.update_thread(...)` auto-assign thread ownership.

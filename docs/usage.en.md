@@ -127,7 +127,9 @@ Default behavior when omitted:
 - setting only one of `EASIERLIT_AUTH_USERNAME` or `EASIERLIT_AUTH_PASSWORD` raises `ValueError`.
 - `persistence=None`: default SQLite persistence is enabled at `.chainlit/easierlit.db`.
 - Default file/image storage always uses `LocalFileStorageClient`.
-- Default local storage path is `public/easierlit`.
+- Default local storage path is `<CHAINLIT_APP_ROOT or cwd>/public/easierlit`.
+- `LocalFileStorageClient(base_dir=...)` must resolve under `<CHAINLIT_APP_ROOT or cwd>/public`.
+- Local file/image URLs automatically include `CHAINLIT_PARENT_ROOT_PATH` + `CHAINLIT_ROOT_PATH`.
 
 Auth setup example:
 
@@ -222,7 +224,8 @@ Behavior details:
 - `update_thread` updates only when target thread already exists.
 - `get_messages` returns thread metadata and one ordered `messages` list.
 - `get_messages` keeps only `user_message`/`assistant_message`/`system_message`/`tool` step types.
-- `get_messages` maps `thread["elements"]` by `forId` so each returned message contains an `elements` list.
+- `get_messages` maps `thread["elements"]` by `forId` aliases: `forId`, `for_id`, `stepId`, `step_id`.
+- `get_messages` enriches each returned element with `has_source` and `source` (`url`/`path`/`bytes`/`objectKey`/`chainlitKey`).
 - If auth is configured, `new_thread` and `update_thread` auto-resolve owner user and save with `user_id`.
 - In SQLite SQLAlchemyDataLayer, `tags` list is JSON-serialized on write and normalized to list on read.
 

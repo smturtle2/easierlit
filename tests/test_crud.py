@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from chainlit.context import context_var
@@ -260,6 +261,12 @@ def test_get_messages_preserves_supported_order_and_maps_elements():
     assert [element["id"] for element in messages_payload["messages"][0]["elements"]] == ["el-1"]
     assert messages_payload["messages"][1]["elements"] == []
     assert [element["id"] for element in messages_payload["messages"][2]["elements"]] == ["el-2"]
+    first_element = messages_payload["messages"][0]["elements"][0]
+    assert first_element["has_source"] is True
+    assert first_element["source"] == {
+        "kind": "url",
+        "value": "https://example.com/a.png",
+    }
 
 
 def test_get_messages_handles_missing_steps_key():
@@ -294,6 +301,105 @@ def test_get_messages_handles_missing_elements_key():
     assert [item["id"] for item in messages_payload["messages"]] == ["msg-1", "tool-1"]
     assert messages_payload["messages"][0]["elements"] == []
     assert messages_payload["messages"][1]["elements"] == []
+
+
+def test_get_messages_maps_elements_with_for_id_aliases_and_non_string_step_ids():
+    uuid_step_id = uuid4()
+
+    class _FakeDataLayerWithAliasedElementKeys(FakeDataLayer):
+        async def get_thread(self, thread_id: str):
+            self.requested_threads.append(thread_id)
+            if thread_id != "thread-1":
+                return None
+            return {
+                "id": thread_id,
+                "name": "Thread 1",
+                "steps": [
+                    {"id": 1, "type": "assistant_message", "output": "one"},
+                    {"id": uuid_step_id, "type": "tool", "output": "{}"},
+                ],
+                "elements": [
+                    {
+                        "id": "el-1",
+                        "type": "image",
+                        "for_id": 1,
+                        "path": "/tmp/one.png",
+                    },
+                    {
+                        "id": "el-2",
+                        "type": "image",
+                        "stepId": uuid_step_id,
+                        "content": b"\x89PNG",
+                    },
+                ],
+            }
+
+    fake = _FakeDataLayerWithAliasedElementKeys()
+    app = EasierlitApp(data_layer_getter=lambda: fake)
+    messages_payload = app.get_messages("thread-1")
+
+    assert [item["id"] for item in messages_payload["messages"]] == [1, uuid_step_id]
+    first_element = messages_payload["messages"][0]["elements"][0]
+    assert first_element["id"] == "el-1"
+    assert first_element["has_source"] is True
+    assert first_element["source"] == {"kind": "path", "value": "/tmp/one.png"}
+
+    second_element = messages_payload["messages"][1]["elements"][0]
+    assert second_element["id"] == "el-2"
+    assert second_element["has_source"] is True
+    assert second_element["source"] == {"kind": "bytes", "value": {"length": 4}}
+
+
+def test_get_messages_resolves_url_from_object_key_and_marks_missing_source():
+    class _FakeStorageProvider:
+        async def get_read_url(self, object_key: str) -> str:
+            return f"/public/easierlit/{object_key}"
+
+    class _FakeDataLayerWithObjectKeyOnlyElements(FakeDataLayer):
+        def __init__(self):
+            super().__init__()
+            self.storage_provider = _FakeStorageProvider()
+
+        async def get_thread(self, thread_id: str):
+            self.requested_threads.append(thread_id)
+            if thread_id != "thread-1":
+                return None
+            return {
+                "id": thread_id,
+                "name": "Thread 1",
+                "steps": [
+                    {"id": "msg-1", "type": "assistant_message", "output": "hi"},
+                ],
+                "elements": [
+                    {
+                        "id": "el-object",
+                        "type": "image",
+                        "forId": "msg-1",
+                        "objectKey": "user-1/img.png",
+                    },
+                    {
+                        "id": "el-none",
+                        "type": "image",
+                        "forId": "msg-1",
+                    },
+                ],
+            }
+
+    fake = _FakeDataLayerWithObjectKeyOnlyElements()
+    app = EasierlitApp(data_layer_getter=lambda: fake)
+    messages_payload = app.get_messages("thread-1")
+
+    object_element = messages_payload["messages"][0]["elements"][0]
+    assert object_element["url"] == "/public/easierlit/user-1/img.png"
+    assert object_element["has_source"] is True
+    assert object_element["source"] == {
+        "kind": "url",
+        "value": "/public/easierlit/user-1/img.png",
+    }
+
+    missing_source_element = messages_payload["messages"][0]["elements"][1]
+    assert missing_source_element["has_source"] is False
+    assert missing_source_element["source"] is None
 
 
 def test_new_thread_creates_when_missing():

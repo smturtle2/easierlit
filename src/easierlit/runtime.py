@@ -11,6 +11,7 @@ from chainlit.context import init_http_context
 from chainlit.data import get_data_layer
 from chainlit.utils import utc_now
 
+from .discord_outgoing import send_discord_command, supports_discord_command
 from .errors import ThreadSessionNotActiveError
 from .models import IncomingMessage, OutgoingCommand
 
@@ -219,13 +220,37 @@ class RuntimeRegistry:
 
         return session
 
+    @staticmethod
+    def _require_thread_id(command: OutgoingCommand) -> str:
+        thread_id = command.thread_id
+        if not thread_id:
+            raise ValueError("Outgoing command is missing thread_id.")
+        return thread_id
+
+    @staticmethod
+    def _require_message_id(command: OutgoingCommand, *, action: str) -> str:
+        message_id = command.message_id
+        if not message_id:
+            raise ValueError(f"{action} command requires message_id.")
+        return message_id
+
+    @staticmethod
+    def _is_tool_command(command_name: str) -> bool:
+        return command_name in ("add_tool", "update_tool")
+
+    @staticmethod
+    def _is_create_command(command_name: str) -> bool:
+        return command_name in ("add_message", "add_tool")
+
+    @staticmethod
+    def _is_update_command(command_name: str) -> bool:
+        return command_name in ("update_message", "update_tool")
+
     async def apply_outgoing_command(self, command: OutgoingCommand) -> None:
         if command.command == "close":
             return
 
-        thread_id = command.thread_id
-        if not thread_id:
-            raise ValueError("Outgoing command is missing thread_id.")
+        thread_id = self._require_thread_id(command)
 
         session_handled = False
         session = self._resolve_session(thread_id)
@@ -279,8 +304,7 @@ class RuntimeRegistry:
             return
 
         if command.command == "update_message":
-            if not command.message_id:
-                raise ValueError("Update command requires message_id.")
+            self._require_message_id(command, action="Update")
             message = Message(
                 id=command.message_id,
                 content=command.content or "",
@@ -291,8 +315,7 @@ class RuntimeRegistry:
             return
 
         if command.command == "add_tool":
-            if not command.message_id:
-                raise ValueError("Add tool command requires message_id.")
+            self._require_message_id(command, action="Add tool")
             step = Step(
                 id=command.message_id,
                 thread_id=command.thread_id,
@@ -305,8 +328,7 @@ class RuntimeRegistry:
             return
 
         if command.command == "update_tool":
-            if not command.message_id:
-                raise ValueError("Update tool command requires message_id.")
+            self._require_message_id(command, action="Update tool")
             step = Step(
                 id=command.message_id,
                 thread_id=command.thread_id,
@@ -319,8 +341,7 @@ class RuntimeRegistry:
             return
 
         if command.command == "delete":
-            if not command.message_id:
-                raise ValueError("Delete command requires message_id.")
+            self._require_message_id(command, action="Delete")
             step = Step(
                 id=command.message_id,
                 thread_id=command.thread_id,
@@ -338,24 +359,21 @@ class RuntimeRegistry:
         if not data_layer:
             raise RuntimeError("Data layer unexpectedly missing.")
 
-        if not command.thread_id:
-            raise ValueError(f"{command.command} command requires thread_id.")
-        self._init_data_layer_http_context(command.thread_id)
+        thread_id = self._require_thread_id(command)
+        self._init_data_layer_http_context(thread_id)
 
         if command.command == "delete":
-            if not command.message_id:
-                raise ValueError("Delete command requires message_id.")
-            await data_layer.delete_step(command.message_id)
+            message_id = self._require_message_id(command, action="Delete")
+            await data_layer.delete_step(message_id)
             return
 
-        if not command.message_id:
-            raise ValueError(f"{command.command} command requires message_id.")
+        message_id = self._require_message_id(command, action=command.command)
 
         timestamp = self._utc_now_fn()
-        is_tool_command = command.command in ("add_tool", "update_tool")
+        is_tool_command = self._is_tool_command(command.command)
         step_dict = {
-            "id": command.message_id,
-            "threadId": command.thread_id,
+            "id": message_id,
+            "threadId": thread_id,
             "name": command.author,
             "type": "tool" if is_tool_command else "assistant_message",
             "output": command.content or "",
@@ -368,18 +386,18 @@ class RuntimeRegistry:
             "metadata": command.metadata,
         }
 
-        if command.command in ("add_message", "add_tool"):
+        if self._is_create_command(command.command):
             await data_layer.create_step(step_dict)
             return
 
-        if command.command in ("update_message", "update_tool"):
+        if self._is_update_command(command.command):
             await data_layer.update_step(step_dict)
             return
 
         raise ValueError(f"Unsupported command: {command.command}")
 
     async def _apply_discord_command(self, channel_id: int, command: OutgoingCommand) -> bool:
-        if command.command not in ("add_message", "add_tool"):
+        if not supports_discord_command(command.command):
             return False
 
         discord_sender = self._discord_sender
@@ -396,25 +414,12 @@ class RuntimeRegistry:
             LOGGER.exception("Failed to import Chainlit Discord client.")
             return False
 
-        channel = client.get_channel(channel_id)
-        if channel is None:
-            try:
-                channel = await client.fetch_channel(channel_id)
-            except Exception:
-                LOGGER.exception("Failed to fetch Discord channel %s.", channel_id)
-                return False
-
-        content = command.content or ""
-        if command.command == "add_tool":
-            content = f"[{command.author}] {content}"
-
-        try:
-            await channel.send(content)
-        except Exception:
-            LOGGER.exception("Failed to send Discord message for thread '%s'.", command.thread_id)
-            return False
-
-        return True
+        return await send_discord_command(
+            client=client,
+            channel_id=channel_id,
+            command=command,
+            logger=LOGGER,
+        )
 
     def _init_data_layer_http_context(self, thread_id: str) -> None:
         self._init_http_context_fn(thread_id=thread_id, client_type="webapp")

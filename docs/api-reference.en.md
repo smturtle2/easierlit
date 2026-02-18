@@ -298,7 +298,10 @@ Behavior:
 - Loads the target thread via `get_thread(thread_id)`.
 - Preserves the original order of `thread["steps"]`.
 - Keeps only dictionary steps with these types: `user_message`, `assistant_message`, `system_message`, `tool`.
-- Maps `thread["elements"]` to each message by `forId`.
+- Maps `thread["elements"]` to each message by `forId` aliases: `forId`, `for_id`, `stepId`, `step_id`.
+- Adds `has_source` and `source` metadata to each returned element.
+- `source.kind` is one of: `url`, `path`, `bytes`, `objectKey`, `chainlitKey`.
+- If `url` is missing and `objectKey` exists, it attempts URL recovery from data-layer storage provider.
 - Returns:
 - `thread`: thread metadata without `steps`
 - `messages`: one ordered list containing message/tool steps, each with `elements`
@@ -402,7 +405,9 @@ EasierlitPersistenceConfig(
 
 - `storage_provider` is forwarded to `SQLAlchemyDataLayer(storage_provider=...)`.
 - Default `storage_provider` is `LocalFileStorageClient`.
-- Default local storage path is `public/easierlit`.
+- Default local storage path is `<CHAINLIT_APP_ROOT or cwd>/public/easierlit`.
+- `LocalFileStorageClient(base_dir=...)` must resolve under `<CHAINLIT_APP_ROOT or cwd>/public`; otherwise `ValueError` is raised.
+- Generated local file/image URLs include both `CHAINLIT_PARENT_ROOT_PATH` and `CHAINLIT_ROOT_PATH`.
 - `enabled=True` requires a valid `LocalFileStorageClient`; `None` or non-local providers raise configuration errors.
 - Easierlit preflights local storage upload/read/delete at startup for default persistence.
 

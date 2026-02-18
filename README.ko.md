@@ -172,7 +172,9 @@ EasierlitDiscordConfig(enabled=True, bot_token=None)
 - 폴백 `admin` / `admin` (경고 로그 출력)
 - 기본 persistence: `.chainlit/easierlit.db` (SQLite, thread/텍스트 step 저장)
 - 기본 파일/이미지 저장소: `LocalFileStorageClient`가 항상 기본 활성화
-- 기본 로컬 저장 경로: `public/easierlit`
+- 기본 로컬 저장 경로: `<CHAINLIT_APP_ROOT 또는 cwd>/public/easierlit`
+- `LocalFileStorageClient(base_dir=...)`는 반드시 `<CHAINLIT_APP_ROOT 또는 cwd>/public` 하위여야 합니다.
+- 로컬 파일/이미지 URL은 `CHAINLIT_PARENT_ROOT_PATH` + `CHAINLIT_ROOT_PATH` prefix를 함께 반영합니다.
 - SQLite 스키마 불일치 시 백업 후 재생성
 - sidebar 기본 상태는 `open`으로 강제
 - `serve()` 실행 중 Discord 연동은 기본 비활성입니다(`DISCORD_BOT_TOKEN`이 기존에 있어도 비활성).
@@ -226,7 +228,8 @@ Thread API:
 - `app.add_thought(...)`는 동일한 도구 호출 경로를 사용하고 도구명은 `Reasoning`으로 고정됩니다.
 - `app.get_messages(...)`은 thread 메타데이터와 순서 보존 `messages` 단일 목록을 반환합니다.
 - `app.get_messages(...)`은 `user_message`/`assistant_message`/`system_message`/`tool`만 포함하고 run 계열 step은 제외합니다.
-- `app.get_messages(...)`은 `thread["elements"]`를 `forId` 기준으로 각 message에 매핑해 이미지/파일 element를 바로 제공합니다.
+- `app.get_messages(...)`은 `thread["elements"]`를 `forId` 별칭(`forId`/`for_id`/`stepId`/`step_id`) 기준으로 각 message에 매핑합니다.
+- `app.get_messages(...)`은 이미지/파일 source 추적을 위해 `elements[*].has_source`와 `elements[*].source`(`url`/`path`/`bytes`/`objectKey`/`chainlitKey`)를 추가합니다.
 - `app.new_thread(...)`는 고유한 `thread_id`를 자동 생성하고 반환
 - `app.update_thread(...)`는 기존 thread만 수정
 - auth 설정 시 `app.new_thread(...)`/`app.update_thread(...)` 모두 소유자를 자동 귀속

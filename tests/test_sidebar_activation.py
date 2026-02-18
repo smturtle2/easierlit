@@ -117,6 +117,7 @@ def test_default_sqlite_data_layer_passes_storage_provider(tmp_path, monkeypatch
     previous_literal_api_key = os.environ.get("LITERAL_API_KEY")
     os.environ.pop("DATABASE_URL", None)
     os.environ.pop("LITERAL_API_KEY", None)
+    monkeypatch.setenv("CHAINLIT_APP_ROOT", str(tmp_path))
 
     chainlit_entry._CONFIG_APPLIED = False
 

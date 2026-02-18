@@ -127,7 +127,9 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 - `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 중 하나만 설정하면 `ValueError`가 발생합니다.
 - `persistence=None`: 기본 SQLite 영속성(`.chainlit/easierlit.db`)이 활성화됩니다.
 - 파일/이미지 저장소는 기본으로 항상 `LocalFileStorageClient`를 사용합니다.
-- 기본 로컬 저장 경로는 `public/easierlit`입니다.
+- 기본 로컬 저장 경로는 `<CHAINLIT_APP_ROOT 또는 cwd>/public/easierlit`입니다.
+- `LocalFileStorageClient(base_dir=...)`는 반드시 `<CHAINLIT_APP_ROOT 또는 cwd>/public` 하위로 해석되어야 합니다.
+- 로컬 파일/이미지 URL은 `CHAINLIT_PARENT_ROOT_PATH` + `CHAINLIT_ROOT_PATH`를 자동 반영합니다.
 
 인증 설정 예시:
 
@@ -222,7 +224,8 @@ Thread History 표시 조건(Chainlit 정책):
 - `update_thread`는 대상 thread가 이미 있을 때만 수정합니다.
 - `get_messages`는 thread 메타데이터와 순서 보존 `messages` 단일 목록을 반환합니다.
 - `get_messages`는 `user_message`/`assistant_message`/`system_message`/`tool` step 타입만 포함합니다.
-- `get_messages`는 `thread["elements"]`를 `forId` 기준으로 매핑해 각 message에 `elements`를 포함합니다.
+- `get_messages`는 `thread["elements"]`를 `forId` 별칭(`forId`, `for_id`, `stepId`, `step_id`) 기준으로 매핑해 각 message에 `elements`를 포함합니다.
+- `get_messages`는 각 element에 `has_source`와 `source`(`url`/`path`/`bytes`/`objectKey`/`chainlitKey`)를 추가합니다.
 - auth 설정 시 `new_thread`/`update_thread` 모두 소유자 user를 자동 조회/생성 후 `user_id`로 저장합니다.
 - SQLite SQLAlchemyDataLayer에서는 `tags` list를 저장 시 JSON 직렬화하고 조회 시 list로 정규화합니다.
 

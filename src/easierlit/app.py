@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import queue
 import threading
@@ -77,16 +78,14 @@ class EasierlitApp:
         metadata: dict | None = None,
     ) -> str:
         """Enqueue an assistant message and return the generated message id."""
-        message_id = str(self._uuid_factory())
-        self._put_outgoing(
-            OutgoingCommand(
-                command="add_message",
-                thread_id=thread_id,
-                message_id=message_id,
-                content=content,
-                author=author,
-                metadata=metadata or {},
-            )
+        message_id = self._new_message_id()
+        self._enqueue_outgoing_command(
+            command="add_message",
+            thread_id=thread_id,
+            message_id=message_id,
+            content=content,
+            author=author,
+            metadata=metadata,
         )
         return message_id
 
@@ -98,16 +97,14 @@ class EasierlitApp:
         metadata: dict | None = None,
     ) -> str:
         """Enqueue a tool-call step and return the generated message id."""
-        message_id = str(self._uuid_factory())
-        self._put_outgoing(
-            OutgoingCommand(
-                command="add_tool",
-                thread_id=thread_id,
-                message_id=message_id,
-                content=content,
-                author=tool_name,
-                metadata=metadata or {},
-            )
+        message_id = self._new_message_id()
+        self._enqueue_outgoing_command(
+            command="add_tool",
+            thread_id=thread_id,
+            message_id=message_id,
+            content=content,
+            author=tool_name,
+            metadata=metadata,
         )
         return message_id
 
@@ -132,14 +129,12 @@ class EasierlitApp:
         content: str,
         metadata: dict | None = None,
     ) -> None:
-        self._put_outgoing(
-            OutgoingCommand(
-                command="update_message",
-                thread_id=thread_id,
-                message_id=message_id,
-                content=content,
-                metadata=metadata or {},
-            )
+        self._enqueue_outgoing_command(
+            command="update_message",
+            thread_id=thread_id,
+            message_id=message_id,
+            content=content,
+            metadata=metadata,
         )
 
     def update_tool(
@@ -150,15 +145,13 @@ class EasierlitApp:
         content: str,
         metadata: dict | None = None,
     ) -> None:
-        self._put_outgoing(
-            OutgoingCommand(
-                command="update_tool",
-                thread_id=thread_id,
-                message_id=message_id,
-                content=content,
-                author=tool_name,
-                metadata=metadata or {},
-            )
+        self._enqueue_outgoing_command(
+            command="update_tool",
+            thread_id=thread_id,
+            message_id=message_id,
+            content=content,
+            author=tool_name,
+            metadata=metadata,
         )
 
     def update_thought(
@@ -177,12 +170,10 @@ class EasierlitApp:
         )
 
     def delete_message(self, thread_id: str, message_id: str) -> None:
-        self._put_outgoing(
-            OutgoingCommand(
-                command="delete",
-                thread_id=thread_id,
-                message_id=message_id,
-            )
+        self._enqueue_outgoing_command(
+            command="delete",
+            thread_id=thread_id,
+            message_id=message_id,
         )
 
     def list_threads(
@@ -223,7 +214,7 @@ class EasierlitApp:
     def get_messages(self, thread_id: str) -> dict:
         """Return thread metadata and one ordered list of messages/tool steps."""
         thread = self.get_thread(thread_id)
-        return self._build_messages_payload(thread)
+        return self._build_messages_payload(thread, data_layer=self._data_layer_getter())
 
     def timeline(self, thread_id: str) -> dict:
         """Backward-compatible alias for `get_messages`."""
@@ -349,6 +340,30 @@ class EasierlitApp:
             raise AppClosedError("Cannot send command to a closed app.")
         self._outgoing_queue.put_nowait(command)
 
+    def _new_message_id(self) -> str:
+        return str(self._uuid_factory())
+
+    def _enqueue_outgoing_command(
+        self,
+        *,
+        command: str,
+        thread_id: str,
+        message_id: str | None = None,
+        content: str | None = None,
+        author: str = "Assistant",
+        metadata: dict | None = None,
+    ) -> None:
+        self._put_outgoing(
+            OutgoingCommand(
+                command=command,
+                thread_id=thread_id,
+                message_id=message_id,
+                content=content,
+                author=author,
+                metadata=metadata or {},
+            )
+        )
+
     def _get_data_layer_or_raise(self):
         data_layer = self._data_layer_getter()
         if data_layer is None:
@@ -431,7 +446,7 @@ class EasierlitApp:
         ]
         return threads
 
-    def _build_messages_payload(self, thread: dict) -> dict:
+    def _build_messages_payload(self, thread: dict, *, data_layer: Any | None = None) -> dict:
         raw_steps = thread.get("steps")
         step_items = raw_steps if isinstance(raw_steps, list) else []
         messages = self._filter_message_steps(step_items)
@@ -443,10 +458,13 @@ class EasierlitApp:
         enriched_messages: list[dict] = []
         for message in messages:
             message_copy = dict(message)
-            message_id = message_copy.get("id")
-            if isinstance(message_id, str):
+            message_id = self._coerce_identifier(message_copy.get("id"))
+            if message_id is not None:
                 related_elements = elements_by_for_id.get(message_id, [])
-                message_copy["elements"] = [dict(element) for element in related_elements]
+                message_copy["elements"] = [
+                    self._normalize_message_element(element, data_layer=data_layer)
+                    for element in related_elements
+                ]
             else:
                 message_copy["elements"] = []
             enriched_messages.append(message_copy)
@@ -476,8 +494,122 @@ class EasierlitApp:
         for element in elements:
             if not isinstance(element, dict):
                 continue
-            for_id = element.get("forId")
-            if not isinstance(for_id, str) or not for_id:
+            for_id = self._extract_element_target_id(element)
+            if for_id is None:
                 continue
             elements_by_for_id.setdefault(for_id, []).append(element)
         return elements_by_for_id
+
+    def _extract_element_target_id(self, element: dict) -> str | None:
+        for key in ("forId", "for_id", "stepId", "step_id"):
+            identifier = self._coerce_identifier(element.get(key))
+            if identifier is not None:
+                return identifier
+        return None
+
+    def _normalize_message_element(self, element: dict, *, data_layer: Any | None = None) -> dict:
+        normalized = dict(element)
+        source = self._resolve_element_source(normalized, data_layer=data_layer)
+        normalized["source"] = source
+        normalized["has_source"] = source is not None
+        return normalized
+
+    def _resolve_element_source(
+        self,
+        element: dict,
+        *,
+        data_layer: Any | None = None,
+    ) -> dict[str, Any] | None:
+        url = self._coerce_non_empty_string(element.get("url"))
+        if url is None:
+            object_key = self._coerce_non_empty_string(
+                element.get("objectKey") or element.get("object_key")
+            )
+            if object_key is not None:
+                resolved_url = self._resolve_element_url_from_object_key(
+                    object_key=object_key,
+                    data_layer=data_layer,
+                )
+                if resolved_url is not None:
+                    element["url"] = resolved_url
+                    url = resolved_url
+
+        if url is not None:
+            return {"kind": "url", "value": url}
+
+        path = self._coerce_non_empty_string(element.get("path"))
+        if path is not None:
+            return {"kind": "path", "value": path}
+
+        content = element.get("content")
+        if isinstance(content, (bytes, bytearray)):
+            return {"kind": "bytes", "value": {"length": len(content)}}
+        if isinstance(content, str) and content:
+            return {"kind": "bytes", "value": {"length": len(content.encode("utf-8"))}}
+
+        object_key = self._coerce_non_empty_string(
+            element.get("objectKey") or element.get("object_key")
+        )
+        if object_key is not None:
+            return {"kind": "objectKey", "value": object_key}
+
+        chainlit_key = self._coerce_non_empty_string(
+            element.get("chainlitKey") or element.get("chainlit_key")
+        )
+        if chainlit_key is not None:
+            return {"kind": "chainlitKey", "value": chainlit_key}
+
+        return None
+
+    def _resolve_element_url_from_object_key(
+        self,
+        *,
+        object_key: str,
+        data_layer: Any | None = None,
+    ) -> str | None:
+        storage = self._resolve_storage_provider(data_layer)
+        if storage is None:
+            return None
+
+        get_read_url = getattr(storage, "get_read_url", None)
+        if not callable(get_read_url):
+            return None
+
+        try:
+            maybe_url = get_read_url(object_key)
+            if inspect.isawaitable(maybe_url):
+                maybe_url = self._runtime.run_coroutine_sync(maybe_url)
+        except Exception:
+            return None
+
+        if isinstance(maybe_url, str) and maybe_url.strip():
+            return maybe_url
+        return None
+
+    def _resolve_storage_provider(self, data_layer: Any | None):
+        if data_layer is None:
+            return None
+
+        for attr in ("storage_provider", "storage_client"):
+            storage = getattr(data_layer, attr, None)
+            if storage is not None:
+                return storage
+        return None
+
+    def _coerce_non_empty_string(self, value: Any) -> str | None:
+        if isinstance(value, str) and value:
+            return value
+        return None
+
+    def _coerce_identifier(self, value: Any) -> str | None:
+        if isinstance(value, str):
+            return value if value else None
+        if value is None:
+            return None
+        if isinstance(value, (dict, list, tuple, set, bytes, bytearray)):
+            return None
+
+        rendered = str(value)
+        if not rendered:
+            return None
+        return rendered

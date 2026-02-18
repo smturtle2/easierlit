@@ -7,15 +7,18 @@ from urllib.parse import quote
 
 from chainlit.data.storage_clients.base import BaseStorageClient
 
-_DEFAULT_LOCAL_STORAGE_DIR = Path("public") / "easierlit"
+_APP_ROOT_ENV = "CHAINLIT_APP_ROOT"
+_PARENT_ROOT_PATH_ENV = "CHAINLIT_PARENT_ROOT_PATH"
+_ROOT_PATH_ENV = "CHAINLIT_ROOT_PATH"
+_DEFAULT_LOCAL_STORAGE_SUBDIR = Path("easierlit")
 
 
 class LocalFileStorageClient(BaseStorageClient):
-    def __init__(self, base_dir: str | Path = _DEFAULT_LOCAL_STORAGE_DIR):
-        resolved_base = Path(base_dir)
-        if not resolved_base.is_absolute():
-            resolved_base = Path.cwd() / resolved_base
-        self.base_dir = resolved_base.resolve()
+    def __init__(self, base_dir: str | Path | None = None):
+        self.public_root = self._resolve_public_root()
+        self.public_root.mkdir(parents=True, exist_ok=True)
+
+        self.base_dir = self._resolve_base_dir(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     async def upload_file(
@@ -43,9 +46,10 @@ class LocalFileStorageClient(BaseStorageClient):
 
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(payload)
+        public_relative = self._public_relative_path(file_path)
         return {
             "object_key": normalized_key,
-            "url": self._build_public_url(normalized_key),
+            "url": self._build_public_url(public_relative),
         }
 
     async def get_read_url(self, object_key: str) -> str:
@@ -54,7 +58,8 @@ class LocalFileStorageClient(BaseStorageClient):
             raise FileNotFoundError(
                 f"Local file not found for object_key '{normalized_key}'."
             )
-        return self._build_public_url(normalized_key)
+        public_relative = self._public_relative_path(file_path)
+        return self._build_public_url(public_relative)
 
     async def delete_file(self, object_key: str) -> bool:
         _, file_path = self._resolve_path(object_key)
@@ -76,16 +81,64 @@ class LocalFileStorageClient(BaseStorageClient):
     async def close(self) -> None:
         return None
 
-    def _build_public_url(self, object_key: str) -> str:
-        root_path = os.getenv("CHAINLIT_ROOT_PATH", "").strip()
-        if root_path:
-            if not root_path.startswith("/"):
-                root_path = f"/{root_path}"
-            root_path = root_path.rstrip("/")
-        encoded_key = quote(object_key, safe="/")
-        if root_path:
-            return f"{root_path}/public/easierlit/{encoded_key}"
-        return f"/public/easierlit/{encoded_key}"
+    def _resolve_public_root(self) -> Path:
+        app_root_raw = os.getenv(_APP_ROOT_ENV, "").strip()
+        if app_root_raw:
+            app_root = Path(app_root_raw)
+            if not app_root.is_absolute():
+                app_root = Path.cwd() / app_root
+        else:
+            app_root = Path.cwd()
+        return (app_root.resolve() / "public").resolve()
+
+    def _resolve_base_dir(self, base_dir: str | Path | None) -> Path:
+        if base_dir is None:
+            resolved_base = self.public_root / _DEFAULT_LOCAL_STORAGE_SUBDIR
+        else:
+            candidate = Path(base_dir)
+            if candidate.is_absolute():
+                resolved_base = candidate
+            else:
+                resolved_base = self.public_root / candidate
+
+        resolved_base = resolved_base.resolve()
+        try:
+            resolved_base.relative_to(self.public_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"LocalFileStorageClient base_dir must be inside '{self.public_root}'."
+            ) from exc
+
+        return resolved_base
+
+    def _public_relative_path(self, file_path: Path) -> str:
+        relative_path = file_path.relative_to(self.public_root)
+        return relative_path.as_posix()
+
+    def _build_public_url(self, public_relative_path: str) -> str:
+        encoded_path = quote(public_relative_path, safe="/")
+        prefix = self._build_url_prefix()
+        if prefix:
+            return f"{prefix}/public/{encoded_path}"
+        return f"/public/{encoded_path}"
+
+    def _build_url_prefix(self) -> str:
+        components = [
+            self._normalize_url_component(os.getenv(_PARENT_ROOT_PATH_ENV, "")),
+            self._normalize_url_component(os.getenv(_ROOT_PATH_ENV, "")),
+        ]
+        non_empty = [item.strip("/") for item in components if item]
+        if not non_empty:
+            return ""
+        return "/" + "/".join(non_empty)
+
+    def _normalize_url_component(self, raw_path: str) -> str:
+        cleaned = raw_path.strip()
+        if not cleaned or cleaned == "/":
+            return ""
+        if not cleaned.startswith("/"):
+            cleaned = f"/{cleaned}"
+        return cleaned.rstrip("/")
 
     def _resolve_path(self, object_key: str) -> tuple[str, Path]:
         normalized_key = self._normalize_object_key(object_key)

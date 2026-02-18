@@ -17,6 +17,7 @@ from chainlit.message import Message
 from chainlit.user import PersistedUser, User
 from chainlit.user_session import user_session
 
+from .discord_outgoing import send_discord_command
 from .models import OutgoingCommand
 from .runtime import RuntimeRegistry
 
@@ -302,28 +303,12 @@ class EasierlitDiscordBridge:
         return self._users_by_discord_id[discord_user.id]
 
     async def send_outgoing_command(self, channel_id: int, command: OutgoingCommand) -> bool:
-        if command.command not in ("add_message", "add_tool"):
-            return False
-
-        channel = self._client.get_channel(channel_id)
-        if channel is None:
-            try:
-                channel = await self._client.fetch_channel(channel_id)
-            except Exception:
-                LOGGER.exception("Failed to fetch Discord channel %s.", channel_id)
-                return False
-
-        content = command.content or ""
-        if command.command == "add_tool":
-            content = f"[{command.author}] {content}"
-
-        try:
-            await channel.send(content)
-        except Exception:
-            LOGGER.exception("Failed to send Discord message for thread '%s'.", command.thread_id)
-            return False
-
-        return True
+        return await send_discord_command(
+            client=self._client,
+            channel_id=channel_id,
+            command=command,
+            logger=LOGGER,
+        )
 
     async def _resolve_runtime_auth_owner_user_id(self, data_layer: object) -> str | None:
         auth = self._runtime.get_auth()

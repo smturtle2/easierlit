@@ -252,6 +252,7 @@ def test_on_app_startup_runs_local_storage_preflight_for_default_data_layer(
         app=EasierlitApp(),
     )
 
+    monkeypatch.setenv("CHAINLIT_APP_ROOT", str(tmp_path))
     provider = LocalFileStorageClient(base_dir=tmp_path / "public" / "easierlit")
     fake_data_layer = SimpleNamespace(storage_provider=provider)
     calls = {"ensure": 0, "preflight": 0}
