@@ -297,6 +297,7 @@ class RuntimeRegistry:
             message = Message(
                 id=command.message_id,
                 content=command.content or "",
+                elements=command.elements,
                 author=command.author,
                 metadata=command.metadata,
             )
@@ -308,6 +309,7 @@ class RuntimeRegistry:
             message = Message(
                 id=command.message_id,
                 content=command.content or "",
+                elements=command.elements,
                 author=command.author,
                 metadata=command.metadata,
             )
@@ -321,6 +323,7 @@ class RuntimeRegistry:
                 thread_id=command.thread_id,
                 name=command.author,
                 type="tool",
+                elements=command.elements,
                 metadata=command.metadata,
             )
             step.output = command.content or ""
@@ -334,6 +337,7 @@ class RuntimeRegistry:
                 thread_id=command.thread_id,
                 name=command.author,
                 type="tool",
+                elements=command.elements,
                 metadata=command.metadata,
             )
             step.output = command.content or ""
@@ -388,13 +392,47 @@ class RuntimeRegistry:
 
         if self._is_create_command(command.command):
             await data_layer.create_step(step_dict)
+            await self._persist_data_layer_elements(
+                data_layer=data_layer,
+                thread_id=thread_id,
+                message_id=message_id,
+                elements=command.elements,
+            )
             return
 
         if self._is_update_command(command.command):
             await data_layer.update_step(step_dict)
+            await self._persist_data_layer_elements(
+                data_layer=data_layer,
+                thread_id=thread_id,
+                message_id=message_id,
+                elements=command.elements,
+            )
             return
 
         raise ValueError(f"Unsupported command: {command.command}")
+
+    async def _persist_data_layer_elements(
+        self,
+        *,
+        data_layer: Any,
+        thread_id: str,
+        message_id: str,
+        elements: list[Any],
+    ) -> None:
+        if not elements:
+            return
+
+        create_element = getattr(data_layer, "create_element", None)
+        if not callable(create_element):
+            return
+
+        for element in elements:
+            if hasattr(element, "for_id"):
+                element.for_id = message_id
+            if hasattr(element, "thread_id"):
+                element.thread_id = thread_id
+            await create_element(element)
 
     async def _apply_discord_command(self, channel_id: int, command: OutgoingCommand) -> bool:
         if not supports_discord_command(command.command):

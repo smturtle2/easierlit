@@ -164,12 +164,14 @@ add_message(
     content: str,
     author: str = "Assistant",
     metadata: dict | None = None,
+    elements: list[Any] | None = None,
 ) -> str
 ```
 
 Behavior:
 
 - Enqueues outgoing `add_message` command.
+- `elements` forwards Chainlit element objects (image/file/etc.) to runtime.
 - Returns generated `message_id`.
 - Command is later applied by runtime dispatcher.
 
@@ -181,11 +183,13 @@ add_tool(
     tool_name: str,
     content: str,
     metadata: dict | None = None,
+    elements: list[Any] | None = None,
 ) -> str
 ```
 
 - Enqueues outgoing `add_tool` command.
 - `tool_name` is written to step `name` (`author` display in UI).
+- `elements` forwards Chainlit element objects to runtime.
 
 ### 4.5 `EasierlitApp.add_thought`
 
@@ -194,6 +198,7 @@ add_thought(
     thread_id: str,
     content: str,
     metadata: dict | None = None,
+    elements: list[Any] | None = None,
 ) -> str
 ```
 
@@ -207,10 +212,12 @@ update_message(
     message_id: str,
     content: str,
     metadata: dict | None = None,
+    elements: list[Any] | None = None,
 ) -> None
 ```
 
 - Enqueues outgoing `update_message` command.
+- `elements` forwards Chainlit element objects to runtime.
 
 ### 4.7 `EasierlitApp.update_tool`
 
@@ -221,11 +228,13 @@ update_tool(
     tool_name: str,
     content: str,
     metadata: dict | None = None,
+    elements: list[Any] | None = None,
 ) -> None
 ```
 
 - Enqueues outgoing `update_tool` command.
 - `tool_name` is written to step `name` (`author` display in UI).
+- `elements` forwards Chainlit element objects to runtime.
 
 ### 4.8 `EasierlitApp.update_thought`
 
@@ -235,6 +244,7 @@ update_thought(
     message_id: str,
     content: str,
     metadata: dict | None = None,
+    elements: list[Any] | None = None,
 ) -> None
 ```
 

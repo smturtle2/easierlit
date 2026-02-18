@@ -113,6 +113,20 @@ server = EasierlitServer(client=client)
 server.serve()
 ```
 
+Image element example (without Markdown):
+
+```python
+from chainlit.element import Image
+
+
+image = Image(name="diagram.png", path="/absolute/path/diagram.png")
+app.add_message(
+    thread_id=incoming.thread_id,
+    content="Attached image",
+    elements=[image],
+)
+```
+
 ## Public API
 
 ```python
@@ -130,12 +144,12 @@ EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
-EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
-EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
-EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name is fixed to "Reasoning"
-EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
-EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None)
-EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # tool_name is fixed to "Reasoning"
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
+EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
+EasierlitApp.add_thought(thread_id, content, metadata=None, elements=None) -> str  # tool_name is fixed to "Reasoning"
+EasierlitApp.update_message(thread_id, message_id, content, metadata=None, elements=None)
+EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None, elements=None)
+EasierlitApp.update_thought(thread_id, message_id, content, metadata=None, elements=None)  # tool_name is fixed to "Reasoning"
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)

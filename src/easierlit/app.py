@@ -76,6 +76,7 @@ class EasierlitApp:
         content: str,
         author: str = "Assistant",
         metadata: dict | None = None,
+        elements: list[Any] | None = None,
     ) -> str:
         """Enqueue an assistant message and return the generated message id."""
         message_id = self._new_message_id()
@@ -86,6 +87,7 @@ class EasierlitApp:
             content=content,
             author=author,
             metadata=metadata,
+            elements=elements,
         )
         return message_id
 
@@ -95,6 +97,7 @@ class EasierlitApp:
         tool_name: str,
         content: str,
         metadata: dict | None = None,
+        elements: list[Any] | None = None,
     ) -> str:
         """Enqueue a tool-call step and return the generated message id."""
         message_id = self._new_message_id()
@@ -105,6 +108,7 @@ class EasierlitApp:
             content=content,
             author=tool_name,
             metadata=metadata,
+            elements=elements,
         )
         return message_id
 
@@ -113,6 +117,7 @@ class EasierlitApp:
         thread_id: str,
         content: str,
         metadata: dict | None = None,
+        elements: list[Any] | None = None,
     ) -> str:
         """Enqueue a reasoning step as a tool-call step."""
         return self.add_tool(
@@ -120,6 +125,7 @@ class EasierlitApp:
             tool_name=self._THOUGHT_TOOL_NAME,
             content=content,
             metadata=metadata,
+            elements=elements,
         )
 
     def update_message(
@@ -128,6 +134,7 @@ class EasierlitApp:
         message_id: str,
         content: str,
         metadata: dict | None = None,
+        elements: list[Any] | None = None,
     ) -> None:
         self._enqueue_outgoing_command(
             command="update_message",
@@ -135,6 +142,7 @@ class EasierlitApp:
             message_id=message_id,
             content=content,
             metadata=metadata,
+            elements=elements,
         )
 
     def update_tool(
@@ -144,6 +152,7 @@ class EasierlitApp:
         tool_name: str,
         content: str,
         metadata: dict | None = None,
+        elements: list[Any] | None = None,
     ) -> None:
         self._enqueue_outgoing_command(
             command="update_tool",
@@ -152,6 +161,7 @@ class EasierlitApp:
             content=content,
             author=tool_name,
             metadata=metadata,
+            elements=elements,
         )
 
     def update_thought(
@@ -160,6 +170,7 @@ class EasierlitApp:
         message_id: str,
         content: str,
         metadata: dict | None = None,
+        elements: list[Any] | None = None,
     ) -> None:
         self.update_tool(
             thread_id=thread_id,
@@ -167,6 +178,7 @@ class EasierlitApp:
             tool_name=self._THOUGHT_TOOL_NAME,
             content=content,
             metadata=metadata,
+            elements=elements,
         )
 
     def delete_message(self, thread_id: str, message_id: str) -> None:
@@ -352,6 +364,7 @@ class EasierlitApp:
         content: str | None = None,
         author: str = "Assistant",
         metadata: dict | None = None,
+        elements: list[Any] | None = None,
     ) -> None:
         self._put_outgoing(
             OutgoingCommand(
@@ -359,6 +372,7 @@ class EasierlitApp:
                 thread_id=thread_id,
                 message_id=message_id,
                 content=content,
+                elements=elements or [],
                 author=author,
                 metadata=metadata or {},
             )

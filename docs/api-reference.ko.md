@@ -164,12 +164,14 @@ add_message(
     content: str,
     author: str = "Assistant",
     metadata: dict | None = None,
+    elements: list[Any] | None = None,
 ) -> str
 ```
 
 동작:
 
 - `add_message` outgoing command를 큐에 적재
+- `elements`로 전달된 Chainlit element 객체(이미지/파일 등)를 runtime으로 전달
 - 생성된 `message_id` 반환
 - 실제 반영은 runtime dispatcher에서 수행
 
@@ -181,11 +183,13 @@ add_tool(
     tool_name: str,
     content: str,
     metadata: dict | None = None,
+    elements: list[Any] | None = None,
 ) -> str
 ```
 
 - `add_tool` outgoing command를 큐에 적재
 - `tool_name`은 step `name`(UI author 표기)으로 저장
+- `elements`로 전달된 Chainlit element 객체를 runtime으로 전달
 
 ### 4.5 `EasierlitApp.add_thought`
 
@@ -194,6 +198,7 @@ add_thought(
     thread_id: str,
     content: str,
     metadata: dict | None = None,
+    elements: list[Any] | None = None,
 ) -> str
 ```
 
@@ -207,10 +212,12 @@ update_message(
     message_id: str,
     content: str,
     metadata: dict | None = None,
+    elements: list[Any] | None = None,
 ) -> None
 ```
 
 - `update_message` command를 큐에 적재
+- `elements`로 전달된 Chainlit element 객체를 runtime으로 전달
 
 ### 4.7 `EasierlitApp.update_tool`
 
@@ -221,11 +228,13 @@ update_tool(
     tool_name: str,
     content: str,
     metadata: dict | None = None,
+    elements: list[Any] | None = None,
 ) -> None
 ```
 
 - `update_tool` command를 큐에 적재
 - `tool_name`은 step `name`(UI author 표기)으로 저장
+- `elements`로 전달된 Chainlit element 객체를 runtime으로 전달
 
 ### 4.8 `EasierlitApp.update_thought`
 
@@ -235,6 +244,7 @@ update_thought(
     message_id: str,
     content: str,
     metadata: dict | None = None,
+    elements: list[Any] | None = None,
 ) -> None
 ```
 

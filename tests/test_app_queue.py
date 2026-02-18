@@ -39,6 +39,23 @@ def test_recv_add_update_delete_flow():
     assert delete_cmd.message_id == message_id
 
 
+def test_add_message_enqueues_elements():
+    app = EasierlitApp()
+    element = object()
+
+    message_id = app.add_message(
+        thread_id="thread-1",
+        content="world",
+        author="Bot",
+        elements=[element],
+    )
+    add_cmd = app._pop_outgoing(timeout=1.0)
+
+    assert add_cmd.command == "add_message"
+    assert add_cmd.message_id == message_id
+    assert add_cmd.elements == [element]
+
+
 def test_tool_and_thought_enqueue_flow():
     app = EasierlitApp()
 
@@ -85,6 +102,30 @@ def test_tool_and_thought_enqueue_flow():
     assert thought_update_cmd.message_id == thought_message_id
     assert thought_update_cmd.author == "Reasoning"
     assert thought_update_cmd.content == "Now I can synthesize the final answer."
+
+
+def test_update_tool_enqueues_elements():
+    app = EasierlitApp()
+    tool_message_id = app.add_tool(
+        thread_id="thread-1",
+        tool_name="SearchTool",
+        content='{"query":"chainlit"}',
+    )
+    _ = app._pop_outgoing(timeout=1.0)
+
+    element = object()
+    app.update_tool(
+        thread_id="thread-1",
+        message_id=tool_message_id,
+        tool_name="SearchTool",
+        content='{"results":3}',
+        elements=[element],
+    )
+    tool_update_cmd = app._pop_outgoing(timeout=1.0)
+
+    assert tool_update_cmd.command == "update_tool"
+    assert tool_update_cmd.message_id == tool_message_id
+    assert tool_update_cmd.elements == [element]
 
 
 def test_recv_timeout_and_close():

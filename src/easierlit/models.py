@@ -27,5 +27,6 @@ class OutgoingCommand(BaseModel):
     thread_id: str | None = None
     message_id: str | None = None
     content: str | None = None
+    elements: list[Any] = Field(default_factory=list)
     author: str = "Assistant"
     metadata: dict[str, Any] = Field(default_factory=dict)
