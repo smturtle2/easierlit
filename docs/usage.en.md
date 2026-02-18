@@ -130,7 +130,8 @@ Default behavior when omitted:
 - Default local storage path is `<CHAINLIT_APP_ROOT or cwd>/public/easierlit`.
 - `LocalFileStorageClient(base_dir=...)` supports `~` expansion.
 - Relative `base_dir` values resolve under `<CHAINLIT_APP_ROOT or cwd>/public`.
-- Absolute `base_dir` values outside `public` are exposed via a symlink under `public/.easierlit-external/`.
+- Absolute `base_dir` values outside `public` are supported directly.
+- Local files/images are served through `/easierlit/local/{object_key}`.
 - Local file/image URLs automatically include `CHAINLIT_PARENT_ROOT_PATH` + `CHAINLIT_ROOT_PATH`.
 
 Auth setup example:

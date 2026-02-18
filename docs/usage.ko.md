@@ -130,7 +130,8 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 - 기본 로컬 저장 경로는 `<CHAINLIT_APP_ROOT 또는 cwd>/public/easierlit`입니다.
 - `LocalFileStorageClient(base_dir=...)`는 `~` 경로 확장을 지원합니다.
 - 상대 `base_dir`는 `<CHAINLIT_APP_ROOT 또는 cwd>/public` 하위로 해석됩니다.
-- `public` 밖 절대 `base_dir`는 `public/.easierlit-external/` 아래 심볼릭 링크로 노출됩니다.
+- `public` 밖 절대 `base_dir`도 직접 사용할 수 있습니다.
+- 로컬 파일/이미지는 `/easierlit/local/{object_key}` 경로로 서빙됩니다.
 - 로컬 파일/이미지 URL은 `CHAINLIT_PARENT_ROOT_PATH` + `CHAINLIT_ROOT_PATH`를 자동 반영합니다.
 
 인증 설정 예시:

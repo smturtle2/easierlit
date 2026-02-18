@@ -32,7 +32,7 @@ def test_local_storage_upload_returns_expected_schema(tmp_path, monkeypatch):
     uploaded = asyncio.run(provider.upload_file("user-1/image 1.png", b"payload"))
 
     assert uploaded["object_key"] == "user-1/image 1.png"
-    assert uploaded["url"] == "/custom/public/easierlit/user-1/image%201.png"
+    assert uploaded["url"] == "/custom/easierlit/local/user-1/image%201.png"
     assert (tmp_path / "public" / "easierlit" / "user-1" / "image 1.png").is_file()
 
 
@@ -44,7 +44,7 @@ def test_local_storage_rejects_traversal_object_key(tmp_path, monkeypatch):
         asyncio.run(provider.upload_file("../escape.txt", b"payload"))
 
 
-def test_local_storage_allows_base_dir_outside_public_root_with_public_mount(tmp_path, monkeypatch):
+def test_local_storage_allows_base_dir_outside_public_root(tmp_path, monkeypatch):
     monkeypatch.setenv("CHAINLIT_APP_ROOT", str(tmp_path))
     outside_base = (tmp_path / "outside").resolve()
     provider = LocalFileStorageClient(base_dir=outside_base)
@@ -53,12 +53,7 @@ def test_local_storage_allows_base_dir_outside_public_root_with_public_mount(tmp
 
     assert provider.base_dir == outside_base
     assert (outside_base / "user-1" / "image.png").is_file()
-    assert uploaded["url"].startswith("/public/.easierlit-external/mount-")
-    assert uploaded["url"].endswith("/user-1/image.png")
-    public_mounts = list((tmp_path / "public" / ".easierlit-external").iterdir())
-    assert len(public_mounts) == 1
-    assert public_mounts[0].is_symlink()
-    assert public_mounts[0].resolve() == outside_base
+    assert uploaded["url"] == "/easierlit/local/user-1/image.png"
 
 
 def test_local_storage_expands_tilde_base_dir(tmp_path, monkeypatch):
@@ -72,8 +67,7 @@ def test_local_storage_expands_tilde_base_dir(tmp_path, monkeypatch):
     expected_base = (tmp_path / "easierlit-storage").resolve()
     assert provider.base_dir == expected_base
     assert (expected_base / "user-1" / "image.png").is_file()
-    assert uploaded["url"].startswith("/public/.easierlit-external/mount-")
-    assert uploaded["url"].endswith("/user-1/image.png")
+    assert uploaded["url"] == "/easierlit/local/user-1/image.png"
 
 
 def test_local_storage_default_base_dir_uses_chainlit_app_root(tmp_path, monkeypatch):
@@ -92,7 +86,7 @@ def test_local_storage_builds_url_with_parent_and_root_path(tmp_path, monkeypatc
 
     uploaded = asyncio.run(provider.upload_file("user-1/image.png", b"payload"))
 
-    assert uploaded["url"] == "/proxy/chat/public/easierlit/user-1/image.png"
+    assert uploaded["url"] == "/proxy/chat/easierlit/local/user-1/image.png"
 
 
 def test_local_storage_relative_base_dir_is_under_public_root(tmp_path, monkeypatch):
@@ -102,7 +96,7 @@ def test_local_storage_relative_base_dir_is_under_public_root(tmp_path, monkeypa
     uploaded = asyncio.run(provider.upload_file("user-1/image.png", b"payload"))
 
     assert provider.base_dir == (tmp_path / "public" / "my-local-store").resolve()
-    assert uploaded["url"] == "/public/my-local-store/user-1/image.png"
+    assert uploaded["url"] == "/easierlit/local/user-1/image.png"
     assert (tmp_path / "public" / "my-local-store" / "user-1" / "image.png").is_file()
 
 

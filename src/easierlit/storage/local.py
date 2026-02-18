@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -12,8 +11,7 @@ _APP_ROOT_ENV = "CHAINLIT_APP_ROOT"
 _PARENT_ROOT_PATH_ENV = "CHAINLIT_PARENT_ROOT_PATH"
 _ROOT_PATH_ENV = "CHAINLIT_ROOT_PATH"
 _DEFAULT_LOCAL_STORAGE_SUBDIR = Path("easierlit")
-_EXTERNAL_PUBLIC_MOUNT_SUBDIR = Path(".easierlit-external")
-_EXTERNAL_PUBLIC_MOUNT_PREFIX = "mount-"
+LOCAL_STORAGE_ROUTE_PREFIX = "/easierlit/local"
 
 
 class LocalFileStorageClient(BaseStorageClient):
@@ -23,7 +21,6 @@ class LocalFileStorageClient(BaseStorageClient):
 
         self.base_dir = self._resolve_base_dir(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
-        self.public_mount_dir = self._resolve_public_mount_dir(self.base_dir)
 
     async def upload_file(
         self,
@@ -50,10 +47,9 @@ class LocalFileStorageClient(BaseStorageClient):
 
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(payload)
-        public_relative = self._public_relative_path(file_path)
         return {
             "object_key": normalized_key,
-            "url": self._build_public_url(public_relative),
+            "url": self._build_local_url(normalized_key),
         }
 
     async def get_read_url(self, object_key: str) -> str:
@@ -62,8 +58,7 @@ class LocalFileStorageClient(BaseStorageClient):
             raise FileNotFoundError(
                 f"Local file not found for object_key '{normalized_key}'."
             )
-        public_relative = self._public_relative_path(file_path)
-        return self._build_public_url(public_relative)
+        return self._build_local_url(normalized_key)
 
     async def delete_file(self, object_key: str) -> bool:
         _, file_path = self._resolve_path(object_key)
@@ -107,54 +102,16 @@ class LocalFileStorageClient(BaseStorageClient):
 
         return resolved_base.resolve()
 
-    def _resolve_public_mount_dir(self, base_dir: Path) -> Path:
-        try:
-            base_dir.relative_to(self.public_root)
-        except ValueError:
-            return self._ensure_external_public_mount(base_dir)
-        return base_dir
-
-    def _ensure_external_public_mount(self, base_dir: Path) -> Path:
-        mount_root = (self.public_root / _EXTERNAL_PUBLIC_MOUNT_SUBDIR).resolve()
-        mount_root.mkdir(parents=True, exist_ok=True)
-
-        digest = hashlib.sha256(str(base_dir).encode("utf-8")).hexdigest()[:12]
-        mount_name = f"{_EXTERNAL_PUBLIC_MOUNT_PREFIX}{digest}"
-        mount_path = (mount_root / mount_name).resolve(strict=False)
-
-        if mount_path.is_symlink():
-            if mount_path.resolve() == base_dir:
-                return mount_path
-            mount_path.unlink()
-        elif mount_path.exists():
-            raise RuntimeError(
-                f"Cannot expose external storage path '{base_dir}' because "
-                f"'{mount_path}' already exists and is not a symlink."
-            )
-
-        try:
-            mount_path.symlink_to(base_dir, target_is_directory=True)
-        except OSError as exc:
-            raise RuntimeError(
-                "Failed to expose external local storage path via public symlink. "
-                "Provide a base_dir inside CHAINLIT_APP_ROOT/public, or enable symlink creation."
-            ) from exc
-
-        return mount_path
-
-    def _public_relative_path(self, file_path: Path) -> str:
-        relative_path = file_path.relative_to(self.base_dir)
-        relative_path = (
-            self.public_mount_dir.relative_to(self.public_root) / relative_path
-        )
-        return relative_path.as_posix()
-
-    def _build_public_url(self, public_relative_path: str) -> str:
-        encoded_path = quote(public_relative_path, safe="/")
+    def _build_local_url(self, object_key: str) -> str:
+        encoded_path = quote(object_key, safe="/")
         prefix = self._build_url_prefix()
         if prefix:
-            return f"{prefix}/public/{encoded_path}"
-        return f"/public/{encoded_path}"
+            return f"{prefix}{LOCAL_STORAGE_ROUTE_PREFIX}/{encoded_path}"
+        return f"{LOCAL_STORAGE_ROUTE_PREFIX}/{encoded_path}"
+
+    def resolve_file_path(self, object_key: str) -> Path:
+        _, file_path = self._resolve_path(object_key)
+        return file_path
 
     def _build_url_prefix(self) -> str:
         components = [

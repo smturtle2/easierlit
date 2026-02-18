@@ -3,9 +3,10 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
 import easierlit.chainlit_entry as chainlit_entry
-from easierlit import EasierlitApp, EasierlitClient
+from easierlit import EasierlitApp, EasierlitClient, EasierlitPersistenceConfig
 from easierlit.errors import AppClosedError, RunFuncExecutionError
 from easierlit.runtime import get_runtime
 from easierlit.storage import LocalFileStorageClient
@@ -42,6 +43,7 @@ def _reset_runtime_state():
     chainlit_entry._WORKER_FAILURE_UI_NOTIFIED = False
     chainlit_entry._DISCORD_BRIDGE = None
     chainlit_entry._DEFAULT_DATA_LAYER_REGISTERED = False
+    chainlit_entry._CONFIG_APPLIED = False
 
     yield
 
@@ -50,6 +52,7 @@ def _reset_runtime_state():
     chainlit_entry._WORKER_FAILURE_UI_NOTIFIED = False
     chainlit_entry._DISCORD_BRIDGE = None
     chainlit_entry._DEFAULT_DATA_LAYER_REGISTERED = False
+    chainlit_entry._CONFIG_APPLIED = False
 
 
 def _sample_message():
@@ -291,3 +294,30 @@ def test_on_app_startup_runs_local_storage_preflight_for_default_data_layer(
 
     assert calls["ensure"] == 1
     assert calls["preflight"] == 1
+
+
+def test_local_storage_route_serves_file_without_public_mount(tmp_path):
+    runtime = get_runtime()
+    storage_provider = LocalFileStorageClient(base_dir=tmp_path / "outside")
+    persistence = EasierlitPersistenceConfig(
+        enabled=True,
+        sqlite_path=str(tmp_path / "route-test.db"),
+        storage_provider=storage_provider,
+    )
+
+    runtime.bind(
+        client=EasierlitClient(run_func=lambda _app: None, worker_mode="thread"),
+        app=EasierlitApp(),
+        persistence=persistence,
+    )
+
+    chainlit_entry._CONFIG_APPLIED = False
+    chainlit_entry._apply_runtime_configuration()
+    uploaded = asyncio.run(storage_provider.upload_file("user-1/image.png", b"payload"))
+
+    with TestClient(chainlit_entry.chainlit_app) as client:
+        response = client.get(uploaded["url"])
+
+    assert uploaded["url"] == "/easierlit/local/user-1/image.png"
+    assert response.status_code == 200
+    assert response.content == b"payload"

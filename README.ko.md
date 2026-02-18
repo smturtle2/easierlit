@@ -189,7 +189,8 @@ EasierlitDiscordConfig(enabled=True, bot_token=None)
 - 기본 로컬 저장 경로: `<CHAINLIT_APP_ROOT 또는 cwd>/public/easierlit`
 - `LocalFileStorageClient(base_dir=...)`는 `~` 경로 확장을 지원합니다.
 - 상대 `base_dir`는 `<CHAINLIT_APP_ROOT 또는 cwd>/public` 하위로 해석됩니다.
-- `public` 밖 절대 `base_dir`는 `public/.easierlit-external/` 아래 심볼릭 링크로 노출됩니다.
+- `public` 밖 절대 `base_dir`도 직접 사용할 수 있습니다.
+- 로컬 파일/이미지는 `/easierlit/local/{object_key}` 경로로 서빙됩니다.
 - 로컬 파일/이미지 URL은 `CHAINLIT_PARENT_ROOT_PATH` + `CHAINLIT_ROOT_PATH` prefix를 함께 반영합니다.
 - SQLite 스키마 불일치 시 백업 후 재생성
 - sidebar 기본 상태는 `open`으로 강제

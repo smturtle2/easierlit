@@ -11,7 +11,10 @@ import chainlit as cl
 from chainlit.auth import require_login
 from chainlit.config import config
 from chainlit.data import get_data_layer
+from chainlit.server import app as chainlit_app
 from chainlit.user import User
+from fastapi import HTTPException
+from fastapi.responses import FileResponse
 
 # When this module is loaded by Chainlit's load_module(file_path), ensure the
 # src root is importable so absolute imports keep working.
@@ -29,6 +32,7 @@ from easierlit.settings import (
     assert_local_storage_operational,
     ensure_local_storage_provider,
 )
+from easierlit.storage.local import LOCAL_STORAGE_ROUTE_PREFIX
 from easierlit.sqlite_bootstrap import ensure_sqlite_schema
 
 LOGGER = logging.getLogger(__name__)
@@ -38,6 +42,7 @@ _APP_CLOSED_WARNING_EMITTED = False
 _WORKER_FAILURE_UI_NOTIFIED = False
 _DISCORD_BRIDGE: EasierlitDiscordBridge | None = None
 _DEFAULT_DATA_LAYER_REGISTERED = False
+_LOCAL_STORAGE_ROUTE_REGISTERED = False
 
 
 def _summarize_worker_error(traceback_text: str) -> str:
@@ -84,6 +89,7 @@ def _apply_runtime_configuration() -> None:
     if _CONFIG_APPLIED:
         return
 
+    _register_local_storage_route_if_needed()
     _apply_auth_configuration()
     _register_default_data_layer_if_needed()
 
@@ -91,6 +97,40 @@ def _apply_runtime_configuration() -> None:
     config.ui.default_sidebar_state = "open"
     config.ui.cot = "full"
     _CONFIG_APPLIED = True
+
+
+def _register_local_storage_route_if_needed() -> None:
+    global _LOCAL_STORAGE_ROUTE_REGISTERED
+    if _LOCAL_STORAGE_ROUTE_REGISTERED:
+        return
+
+    route_path = f"{LOCAL_STORAGE_ROUTE_PREFIX}" + "/{object_key:path}"
+
+    @chainlit_app.get(route_path)
+    async def _easierlit_local_storage_file(object_key: str):
+        persistence = RUNTIME.get_persistence()
+        if persistence is None:
+            raise HTTPException(status_code=404, detail="Local storage is not configured.")
+
+        try:
+            storage_provider = ensure_local_storage_provider(persistence.storage_provider)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="Local storage provider is unavailable.",
+            ) from exc
+
+        try:
+            file_path = storage_provider.resolve_file_path(object_key)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if not file_path.is_file():
+            raise HTTPException(status_code=404, detail="File not found.")
+
+        return FileResponse(path=str(file_path))
+
+    _LOCAL_STORAGE_ROUTE_REGISTERED = True
 
 
 def _apply_auth_configuration() -> None:
