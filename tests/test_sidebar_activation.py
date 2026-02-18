@@ -12,6 +12,7 @@ from easierlit.chainlit_entry import (
     _should_register_default_data_layer,
 )
 from easierlit.runtime import get_runtime
+from easierlit.settings import _resolve_local_storage_provider
 from easierlit.storage import LocalFileStorageClient
 
 
@@ -123,14 +124,14 @@ def test_default_sqlite_data_layer_passes_storage_provider(tmp_path, monkeypatch
     chainlit_entry._CONFIG_APPLIED = False
 
     db_path = tmp_path / "storage-provider.db"
-    storage_provider = LocalFileStorageClient(base_dir=tmp_path / "public" / "easierlit")
+    storage_dir = tmp_path / "public" / "easierlit"
     runtime.bind(
         client=EasierlitClient(run_func=lambda _app: None),
         app=EasierlitApp(),
         persistence=EasierlitPersistenceConfig(
             enabled=True,
             sqlite_path=str(db_path),
-            storage_provider=storage_provider,
+            local_storage_dir=storage_dir,
         ),
     )
 
@@ -149,7 +150,8 @@ def test_default_sqlite_data_layer_passes_storage_provider(tmp_path, monkeypatch
         assert config.code.data_layer is not None
         config.code.data_layer()
         assert captured["conninfo"] == f"sqlite+aiosqlite:///{db_path.resolve()}"
-        assert captured["storage_provider"] is storage_provider
+        assert isinstance(captured["storage_provider"], LocalFileStorageClient)
+        assert captured["storage_provider"].base_dir == storage_dir.resolve()
     finally:
         runtime.unbind()
         _clear_chainlit_hooks()
@@ -221,7 +223,7 @@ def test_default_sqlite_data_layer_uses_default_local_storage_provider(tmp_path,
 
 
 
-def test_default_sqlite_data_layer_accepts_missing_storage_provider(tmp_path):
+def test_default_sqlite_data_layer_uses_default_provider_when_storage_dir_omitted(tmp_path):
     runtime = get_runtime()
     runtime.unbind()
     _clear_chainlit_hooks()
@@ -238,9 +240,8 @@ def test_default_sqlite_data_layer_accepts_missing_storage_provider(tmp_path):
         persistence = EasierlitPersistenceConfig(
             enabled=True,
             sqlite_path=str(db_path),
-            storage_provider=None,
         )
-        assert isinstance(persistence.storage_provider, LocalFileStorageClient)
+        assert isinstance(_resolve_local_storage_provider(persistence), LocalFileStorageClient)
     finally:
         runtime.unbind()
         _clear_chainlit_hooks()

@@ -315,7 +315,7 @@ class RuntimeRegistry:
             return command
         if not command.elements:
             return command
-        if self._resolve_local_storage_provider() is None:
+        if self.__resolve_local_storage_provider() is None:
             return command
 
         message_id = self._require_message_id(command, action=command.command)
@@ -560,7 +560,7 @@ class RuntimeRegistry:
         message_id: str,
         index: int,
     ) -> dict[str, Any] | None:
-        local_storage = self._resolve_local_storage_provider()
+        local_storage = self.__resolve_local_storage_provider()
         if local_storage is None:
             return self._prepare_element_record(
                 element=element,
@@ -686,15 +686,15 @@ class RuntimeRegistry:
             LOGGER.exception("Failed to download element URL: %s", url)
             return None
 
-    def _resolve_local_storage_provider(self) -> "LocalFileStorageClient" | None:
+    def __resolve_local_storage_provider(self) -> "LocalFileStorageClient" | None:
         persistence = self._persistence
         if persistence is None or not persistence.enabled:
             return None
 
-        from .settings import ensure_local_storage_provider
+        from .settings import _resolve_local_storage_provider
 
         try:
-            return ensure_local_storage_provider(persistence.storage_provider)
+            return _resolve_local_storage_provider(persistence)
         except (TypeError, ValueError):
             return None
 

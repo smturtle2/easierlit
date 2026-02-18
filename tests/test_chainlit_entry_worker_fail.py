@@ -9,6 +9,7 @@ import easierlit.chainlit_entry as chainlit_entry
 from easierlit import EasierlitApp, EasierlitClient, EasierlitPersistenceConfig
 from easierlit.errors import AppClosedError, RunFuncExecutionError
 from easierlit.runtime import get_runtime
+from easierlit.settings import _resolve_local_storage_provider
 from easierlit.storage import LocalFileStorageClient
 
 
@@ -260,7 +261,7 @@ def test_on_app_startup_runs_local_storage_preflight_for_default_data_layer(
     monkeypatch.setenv("CHAINLIT_APP_ROOT", str(tmp_path))
     provider = LocalFileStorageClient(base_dir=tmp_path / "public" / "easierlit")
     fake_data_layer = SimpleNamespace(storage_provider=provider)
-    calls = {"ensure": 0, "preflight": 0}
+    calls = {"preflight": 0}
 
     monkeypatch.setattr(chainlit_entry, "_apply_runtime_configuration", lambda: None)
     monkeypatch.setattr(chainlit_entry, "get_data_layer", lambda: fake_data_layer)
@@ -272,19 +273,10 @@ def test_on_app_startup_runs_local_storage_preflight_for_default_data_layer(
     monkeypatch.setattr(chainlit_entry.RUNTIME, "start_dispatcher", _noop_async)
     monkeypatch.setattr(chainlit_entry, "_start_discord_bridge_if_needed", _noop_async)
 
-    def _fake_ensure_local_storage_provider(storage_provider):
-        calls["ensure"] += 1
-        return storage_provider
-
     async def _fake_assert_local_storage_operational(storage_provider):
         del storage_provider
         calls["preflight"] += 1
 
-    monkeypatch.setattr(
-        chainlit_entry,
-        "ensure_local_storage_provider",
-        _fake_ensure_local_storage_provider,
-    )
     monkeypatch.setattr(
         chainlit_entry,
         "assert_local_storage_operational",
@@ -294,18 +286,17 @@ def test_on_app_startup_runs_local_storage_preflight_for_default_data_layer(
     chainlit_entry._DEFAULT_DATA_LAYER_REGISTERED = True
     asyncio.run(chainlit_entry._on_app_startup())
 
-    assert calls["ensure"] == 0
     assert calls["preflight"] == 1
 
 
 def test_local_storage_route_serves_file_without_public_mount(tmp_path):
     runtime = get_runtime()
-    storage_provider = LocalFileStorageClient(base_dir=tmp_path / "outside")
     persistence = EasierlitPersistenceConfig(
         enabled=True,
         sqlite_path=str(tmp_path / "route-test.db"),
-        storage_provider=storage_provider,
+        local_storage_dir=tmp_path / "outside",
     )
+    storage_provider = _resolve_local_storage_provider(persistence)
 
     runtime.bind(
         client=EasierlitClient(run_func=lambda _app: None, worker_mode="thread"),
@@ -344,7 +335,7 @@ def test_local_storage_route_resolves_tilde_local_storage_dir(tmp_path, monkeypa
     chainlit_entry._LOCAL_STORAGE_PROVIDER = None
     chainlit_entry._apply_runtime_configuration()
 
-    provider = persistence.storage_provider
+    provider = _resolve_local_storage_provider(persistence)
     uploaded = asyncio.run(provider.upload_file("user-1/image.png", b"payload"))
 
     assert provider.base_dir == (tmp_path / "fablit" / "workspace" / "images").resolve()
@@ -359,12 +350,12 @@ def test_local_storage_route_resolves_tilde_local_storage_dir(tmp_path, monkeypa
 
 def test_local_storage_route_uses_runtime_persistence_provider_only(tmp_path, monkeypatch):
     runtime = get_runtime()
-    persistence_provider = LocalFileStorageClient(base_dir=tmp_path / "persistence-images")
     persistence = EasierlitPersistenceConfig(
         enabled=True,
         sqlite_path=str(tmp_path / "route-test.db"),
-        storage_provider=persistence_provider,
+        local_storage_dir=tmp_path / "persistence-images",
     )
+    persistence_provider = _resolve_local_storage_provider(persistence)
     runtime.bind(
         client=EasierlitClient(run_func=lambda _app: None, worker_mode="thread"),
         app=EasierlitApp(),

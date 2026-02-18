@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -21,12 +21,12 @@ def _build_local_storage_provider(base_dir: str | Path | None) -> LocalFileStora
 def ensure_local_storage_provider(storage_provider: BaseStorageClient | Any | None) -> LocalFileStorageClient:
     if storage_provider is None:
         raise ValueError(
-            "EasierlitPersistenceConfig.storage_provider must be a LocalFileStorageClient."
+            "Local storage provider must be a LocalFileStorageClient."
         )
 
     if not isinstance(storage_provider, LocalFileStorageClient):
         raise TypeError(
-            "EasierlitPersistenceConfig.storage_provider must be an instance of "
+            "Local storage provider must be an instance of "
             "easierlit.storage.local.LocalFileStorageClient."
         )
 
@@ -93,19 +93,29 @@ class EasierlitPersistenceConfig:
     enabled: bool = True
     sqlite_path: str = ".chainlit/easierlit.db"
     local_storage_dir: str | Path | None = None
-    storage_provider: BaseStorageClient | Any | None = None
+    _storage_provider: LocalFileStorageClient | None = field(
+        init=False,
+        default=None,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         if not self.enabled:
             return
-        if self.local_storage_dir is not None and self.storage_provider is not None:
-            raise ValueError(
-                "EasierlitPersistenceConfig accepts either local_storage_dir or storage_provider, not both."
-            )
-        if self.storage_provider is None:
-            self.storage_provider = _build_local_storage_provider(self.local_storage_dir)
-            return
-        self.storage_provider = ensure_local_storage_provider(self.storage_provider)
+        self._storage_provider = _build_local_storage_provider(self.local_storage_dir)
+
+
+def _resolve_local_storage_provider(persistence: EasierlitPersistenceConfig) -> LocalFileStorageClient:
+    if not isinstance(persistence, EasierlitPersistenceConfig):
+        raise TypeError("persistence must be an EasierlitPersistenceConfig instance.")
+    if not persistence.enabled:
+        raise ValueError("Local storage provider is unavailable because persistence is disabled.")
+
+    provider = persistence._storage_provider
+    if provider is None:
+        provider = _build_local_storage_provider(persistence.local_storage_dir)
+        persistence._storage_provider = provider
+    return provider
 
 
 @dataclass(slots=True)

@@ -30,7 +30,7 @@ from easierlit.runtime import get_runtime
 from easierlit.settings import (
     EasierlitPersistenceConfig,
     assert_local_storage_operational,
-    ensure_local_storage_provider,
+    _resolve_local_storage_provider,
 )
 from easierlit.storage.local import LOCAL_STORAGE_ROUTE_PREFIX, LocalFileStorageClient
 from easierlit.sqlite_bootstrap import ensure_sqlite_schema
@@ -109,11 +109,7 @@ def _ensure_local_storage_provider_initialized() -> LocalFileStorageClient:
         return _LOCAL_STORAGE_PROVIDER
 
     persistence = RUNTIME.get_persistence() or EasierlitPersistenceConfig()
-    if isinstance(persistence.storage_provider, LocalFileStorageClient):
-        _LOCAL_STORAGE_PROVIDER = persistence.storage_provider
-        return _LOCAL_STORAGE_PROVIDER
-
-    _LOCAL_STORAGE_PROVIDER = ensure_local_storage_provider(persistence.storage_provider)
+    _LOCAL_STORAGE_PROVIDER = _resolve_local_storage_provider(persistence)
     return _LOCAL_STORAGE_PROVIDER
 
 
@@ -126,7 +122,7 @@ def _register_local_storage_route_if_needed() -> None:
 
     @chainlit_app.get(route_path)
     async def _easierlit_local_storage_file(object_key: str):
-        storage_provider = _resolve_local_storage_provider_for_read()
+        storage_provider = __resolve_local_storage_provider_for_read()
 
         try:
             file_path = storage_provider.resolve_file_path(object_key)
@@ -147,7 +143,7 @@ def _register_local_storage_route_if_needed() -> None:
     _LOCAL_STORAGE_ROUTE_REGISTERED = True
 
 
-def _resolve_local_storage_provider_for_read():
+def __resolve_local_storage_provider_for_read():
     try:
         return _ensure_local_storage_provider_initialized()
     except (TypeError, ValueError) as exc:

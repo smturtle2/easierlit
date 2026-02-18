@@ -3,6 +3,7 @@ from pathlib import Path
 
 from easierlit import EasierlitApp, EasierlitClient, EasierlitPersistenceConfig, OutgoingCommand
 from easierlit.runtime import RuntimeRegistry
+from easierlit.settings import _resolve_local_storage_provider
 
 
 class _FakeSQLAlchemyLikeDataLayer:
@@ -87,7 +88,7 @@ def test_apply_outgoing_command_prepersists_elements_to_local_storage(tmp_path):
     object_key = element_row["objectKey"]
     assert element_row["url"] == f"/easierlit/local/{object_key}"
 
-    storage_provider = runtime.get_persistence().storage_provider  # type: ignore[union-attr]
+    storage_provider = _resolve_local_storage_provider(runtime.get_persistence())  # type: ignore[arg-type]
     persisted_path = storage_provider.base_dir / object_key
     assert persisted_path.is_file()
     assert persisted_path.read_bytes() == source_payload
