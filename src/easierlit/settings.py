@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -13,8 +14,8 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 
-def _default_local_storage_provider() -> LocalFileStorageClient:
-    return ensure_local_storage_provider(LocalFileStorageClient())
+def _build_local_storage_provider(base_dir: str | Path | None) -> LocalFileStorageClient:
+    return ensure_local_storage_provider(LocalFileStorageClient(base_dir=base_dir))
 
 
 def ensure_local_storage_provider(storage_provider: BaseStorageClient | Any | None) -> LocalFileStorageClient:
@@ -91,12 +92,18 @@ class EasierlitAuthConfig:
 class EasierlitPersistenceConfig:
     enabled: bool = True
     sqlite_path: str = ".chainlit/easierlit.db"
-    storage_provider: BaseStorageClient | Any = field(
-        default_factory=_default_local_storage_provider
-    )
+    local_storage_dir: str | Path | None = None
+    storage_provider: BaseStorageClient | Any | None = None
 
     def __post_init__(self) -> None:
         if not self.enabled:
+            return
+        if self.local_storage_dir is not None and self.storage_provider is not None:
+            raise ValueError(
+                "EasierlitPersistenceConfig accepts either local_storage_dir or storage_provider, not both."
+            )
+        if self.storage_provider is None:
+            self.storage_provider = _build_local_storage_provider(self.local_storage_dir)
             return
         self.storage_provider = ensure_local_storage_provider(self.storage_provider)
 

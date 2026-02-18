@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import mimetypes
 import queue
+import re
 import threading
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Coroutine
+from urllib.parse import unquote, urlparse
+from uuid import uuid4
 
+import aiohttp
 from chainlit.context import init_http_context
 from chainlit.data import get_data_layer
 from chainlit.utils import utc_now
@@ -14,6 +21,7 @@ from chainlit.utils import utc_now
 from .discord_outgoing import send_discord_command, supports_discord_command
 from .errors import ThreadSessionNotActiveError
 from .models import IncomingMessage, OutgoingCommand
+from .storage.local import LOCAL_STORAGE_ROUTE_PREFIX
 
 if TYPE_CHECKING:
     from chainlit.session import WebsocketSession
@@ -21,8 +29,28 @@ if TYPE_CHECKING:
     from .app import EasierlitApp
     from .client import EasierlitClient
     from .settings import EasierlitAuthConfig, EasierlitPersistenceConfig
+    from .storage.local import LocalFileStorageClient
 
 LOGGER = logging.getLogger(__name__)
+
+_ELEMENT_DB_COLUMNS = (
+    "id",
+    "threadId",
+    "type",
+    "chainlitKey",
+    "url",
+    "objectKey",
+    "name",
+    "display",
+    "size",
+    "language",
+    "page",
+    "autoPlay",
+    "playerConfig",
+    "forId",
+    "mime",
+    "props",
+)
 
 
 class RuntimeRegistry:
@@ -251,6 +279,7 @@ class RuntimeRegistry:
             return
 
         thread_id = self._require_thread_id(command)
+        command = await self._prepare_command_elements(command, thread_id=thread_id)
 
         session_handled = False
         session = self._resolve_session(thread_id)
@@ -263,100 +292,142 @@ class RuntimeRegistry:
         if discord_channel_id is not None:
             discord_handled = await self._apply_discord_command(discord_channel_id, command)
 
-        # Realtime session handling is sufficient; avoid duplicate data-layer writes.
-        if session_handled:
-            return
-
         data_layer = self._data_layer_getter()
-
-        # Discord-only paths should still persist when data layer exists so
-        # web history can see assistant/tool outputs.
-        if discord_handled:
-            if data_layer:
-                await self._apply_data_layer_command(command)
-                return
+        if data_layer:
+            await self._apply_data_layer_command(command)
             return
 
-        if not data_layer:
+        if session_handled or discord_handled:
+            return
+
+        if not session_handled and not discord_handled:
             raise ThreadSessionNotActiveError(
                 f"Thread '{thread_id}' has no active session and no data layer fallback."
             )
 
-        await self._apply_data_layer_command(command)
+    async def _prepare_command_elements(
+        self,
+        command: OutgoingCommand,
+        *,
+        thread_id: str,
+    ) -> OutgoingCommand:
+        if command.command == "delete":
+            return command
+        if not command.elements:
+            return command
+        if self._resolve_local_storage_provider() is None:
+            return command
+
+        message_id = self._require_message_id(command, action=command.command)
+        prepared: list[dict[str, Any]] = []
+        for index, element in enumerate(command.elements):
+            normalized = await self._prepare_element_for_local_storage(
+                element=element,
+                thread_id=thread_id,
+                message_id=message_id,
+                index=index,
+            )
+            if normalized is None:
+                continue
+            prepared.append(normalized)
+
+        return command.model_copy(update={"elements": prepared})
 
     async def _apply_realtime_command(
         self, session: WebsocketSession, command: OutgoingCommand
     ) -> None:
-        from chainlit.context import init_ws_context
-        from chainlit.message import Message
-        from chainlit.step import Step
+        from chainlit.context import context, init_ws_context
 
         init_ws_context(session)
+        thread_id = self._require_thread_id(command)
 
         if command.command == "add_message":
-            message = Message(
-                id=command.message_id,
-                content=command.content or "",
-                elements=command.elements,
-                author=command.author,
-                metadata=command.metadata,
+            message_id = self._require_message_id(command, action="Add message")
+            step_dict = self._build_step_payload(
+                command=command,
+                thread_id=thread_id,
+                message_id=message_id,
             )
-            await message.send()
+            await context.emitter.send_step(step_dict)
+            await self._emit_realtime_elements(command.elements)
             return
 
         if command.command == "update_message":
-            self._require_message_id(command, action="Update")
-            message = Message(
-                id=command.message_id,
-                content=command.content or "",
-                elements=command.elements,
-                author=command.author,
-                metadata=command.metadata,
+            message_id = self._require_message_id(command, action="Update")
+            step_dict = self._build_step_payload(
+                command=command,
+                thread_id=thread_id,
+                message_id=message_id,
             )
-            await message.update()
+            await context.emitter.update_step(step_dict)
+            await self._emit_realtime_elements(command.elements)
             return
 
         if command.command == "add_tool":
-            self._require_message_id(command, action="Add tool")
-            step = Step(
-                id=command.message_id,
-                thread_id=command.thread_id,
-                name=command.author,
-                type="tool",
-                elements=command.elements,
-                metadata=command.metadata,
+            message_id = self._require_message_id(command, action="Add tool")
+            step_dict = self._build_step_payload(
+                command=command,
+                thread_id=thread_id,
+                message_id=message_id,
             )
-            step.output = command.content or ""
-            await step.send()
+            await context.emitter.send_step(step_dict)
+            await self._emit_realtime_elements(command.elements)
             return
 
         if command.command == "update_tool":
-            self._require_message_id(command, action="Update tool")
-            step = Step(
-                id=command.message_id,
-                thread_id=command.thread_id,
-                name=command.author,
-                type="tool",
-                elements=command.elements,
-                metadata=command.metadata,
+            message_id = self._require_message_id(command, action="Update tool")
+            step_dict = self._build_step_payload(
+                command=command,
+                thread_id=thread_id,
+                message_id=message_id,
             )
-            step.output = command.content or ""
-            await step.update()
+            await context.emitter.update_step(step_dict)
+            await self._emit_realtime_elements(command.elements)
             return
 
         if command.command == "delete":
-            self._require_message_id(command, action="Delete")
-            step = Step(
-                id=command.message_id,
-                thread_id=command.thread_id,
-                name=command.author,
-                type="undefined",
-                metadata=command.metadata,
-            )
-            await step.remove()
+            message_id = self._require_message_id(command, action="Delete")
+            await context.emitter.delete_step({"id": message_id, "threadId": thread_id})
             return
 
         raise ValueError(f"Unsupported command: {command.command}")
+
+    async def _emit_realtime_elements(self, elements: list[Any]) -> None:
+        if not elements:
+            return
+
+        from chainlit.context import context
+
+        for element in elements:
+            payload = element if isinstance(element, dict) else self._coerce_element_dict(element)
+            if not isinstance(payload, dict):
+                continue
+            await context.emitter.send_element(payload)
+
+    def _build_step_payload(
+        self,
+        *,
+        command: OutgoingCommand,
+        thread_id: str,
+        message_id: str,
+        timestamp: Any | None = None,
+    ) -> dict[str, Any]:
+        created_at = timestamp if timestamp is not None else self._utc_now_fn()
+        is_tool_command = self._is_tool_command(command.command)
+        return {
+            "id": message_id,
+            "threadId": thread_id,
+            "name": command.author,
+            "type": "tool" if is_tool_command else "assistant_message",
+            "output": command.content or "",
+            "createdAt": created_at,
+            "start": created_at,
+            "end": created_at,
+            "streaming": False,
+            "isError": False,
+            "waitForAnswer": False,
+            "metadata": command.metadata or {},
+        }
 
     async def _apply_data_layer_command(self, command: OutgoingCommand) -> None:
         data_layer = self._data_layer_getter()
@@ -372,23 +443,13 @@ class RuntimeRegistry:
             return
 
         message_id = self._require_message_id(command, action=command.command)
-
         timestamp = self._utc_now_fn()
-        is_tool_command = self._is_tool_command(command.command)
-        step_dict = {
-            "id": message_id,
-            "threadId": thread_id,
-            "name": command.author,
-            "type": "tool" if is_tool_command else "assistant_message",
-            "output": command.content or "",
-            "createdAt": timestamp,
-            "start": timestamp,
-            "end": timestamp,
-            "streaming": False,
-            "isError": False,
-            "waitForAnswer": False,
-            "metadata": command.metadata,
-        }
+        step_dict = self._build_step_payload(
+            command=command,
+            thread_id=thread_id,
+            message_id=message_id,
+            timestamp=timestamp,
+        )
 
         if self._is_create_command(command.command):
             await data_layer.create_step(step_dict)
@@ -423,6 +484,18 @@ class RuntimeRegistry:
         if not elements:
             return
 
+        if self._can_upsert_element_directly(data_layer):
+            for element in elements:
+                element_dict = self._prepare_element_record(
+                    element=element,
+                    thread_id=thread_id,
+                    message_id=message_id,
+                )
+                if element_dict is None:
+                    continue
+                await self._upsert_sqlalchemy_element(data_layer=data_layer, element_dict=element_dict)
+            return
+
         create_element = getattr(data_layer, "create_element", None)
         if not callable(create_element):
             return
@@ -433,6 +506,359 @@ class RuntimeRegistry:
             if hasattr(element, "thread_id"):
                 element.thread_id = thread_id
             await create_element(element)
+
+    def _can_upsert_element_directly(self, data_layer: Any) -> bool:
+        execute_sql = getattr(data_layer, "execute_sql", None)
+        return callable(execute_sql)
+
+    async def _upsert_sqlalchemy_element(
+        self,
+        *,
+        data_layer: Any,
+        element_dict: dict[str, Any],
+    ) -> None:
+        execute_sql = getattr(data_layer, "execute_sql", None)
+        if not callable(execute_sql):
+            return
+
+        payload = {
+            column: element_dict.get(column)
+            for column in _ELEMENT_DB_COLUMNS
+            if element_dict.get(column) is not None
+        }
+        if not payload.get("id"):
+            return
+
+        props = payload.get("props")
+        if isinstance(props, dict):
+            payload["props"] = json.dumps(props, ensure_ascii=False)
+        elif props is not None and not isinstance(props, str):
+            payload["props"] = json.dumps(props, ensure_ascii=False)
+
+        columns = ", ".join(f'"{column}"' for column in payload.keys())
+        placeholders = ", ".join(f":{column}" for column in payload.keys())
+        updates = ", ".join(
+            f'"{column}" = :{column}' for column in payload.keys() if column != "id"
+        )
+        if updates:
+            query = (
+                f"INSERT INTO elements ({columns}) VALUES ({placeholders}) "
+                f"ON CONFLICT (id) DO UPDATE SET {updates};"
+            )
+        else:
+            query = (
+                f"INSERT INTO elements ({columns}) VALUES ({placeholders}) "
+                'ON CONFLICT (id) DO NOTHING;'
+            )
+        await execute_sql(query=query, parameters=payload)
+
+    async def _prepare_element_for_local_storage(
+        self,
+        *,
+        element: Any,
+        thread_id: str,
+        message_id: str,
+        index: int,
+    ) -> dict[str, Any] | None:
+        local_storage = self._resolve_local_storage_provider()
+        if local_storage is None:
+            return self._prepare_element_record(
+                element=element,
+                thread_id=thread_id,
+                message_id=message_id,
+            )
+
+        element_dict = self._coerce_element_dict(element)
+        element_id = self._coerce_text(element_dict.get("id")) or str(uuid4())
+        element_name = self._coerce_text(element_dict.get("name")) or f"element-{index + 1}"
+        mime = self._coerce_text(element_dict.get("mime")) or self._guess_mime_type(element_name)
+        element_type = self._coerce_text(element_dict.get("type")) or self._infer_element_type_from_mime(
+            mime
+        )
+        object_key = self._resolve_element_object_key(element_dict)
+        url = self._coerce_text(element_dict.get("url"))
+
+        if object_key:
+            if not url:
+                try:
+                    url = await local_storage.get_read_url(object_key)
+                except Exception:
+                    url = None
+        else:
+            payload = await self._resolve_element_payload(element_dict, local_storage=local_storage)
+            if payload is None:
+                LOGGER.warning(
+                    "Skipping element '%s' for message '%s': no readable source.",
+                    element_name,
+                    message_id,
+                )
+                return None
+            object_key = self._build_generated_object_key(
+                thread_id=thread_id,
+                message_id=message_id,
+                element_id=element_id,
+                element_name=element_name,
+            )
+            uploaded = await local_storage.upload_file(
+                object_key=object_key,
+                data=payload,
+                mime=mime,
+                overwrite=True,
+            )
+            object_key = self._coerce_text(uploaded.get("object_key")) or object_key
+            url = self._coerce_text(uploaded.get("url")) or url
+
+        if not object_key or not url:
+            LOGGER.warning(
+                "Skipping element '%s' for message '%s': failed to resolve objectKey/url.",
+                element_name,
+                message_id,
+            )
+            return None
+
+        normalized = {
+            "id": element_id,
+            "threadId": thread_id,
+            "type": element_type,
+            "url": url,
+            "objectKey": object_key,
+            "name": element_name,
+            "display": self._coerce_text(element_dict.get("display")) or "inline",
+            "size": self._coerce_text(element_dict.get("size")),
+            "language": self._coerce_text(element_dict.get("language")),
+            "page": element_dict.get("page"),
+            "autoPlay": element_dict.get("autoPlay"),
+            "playerConfig": element_dict.get("playerConfig"),
+            "forId": message_id,
+            "mime": mime,
+            "props": element_dict.get("props"),
+        }
+
+        return {key: value for key, value in normalized.items() if value is not None}
+
+    async def _resolve_element_payload(
+        self,
+        element_dict: dict[str, Any],
+        *,
+        local_storage: "LocalFileStorageClient",
+    ) -> bytes | None:
+        path = self._coerce_text(element_dict.get("path"))
+        if path:
+            file_path = Path(path).expanduser()
+            if not file_path.is_absolute():
+                file_path = Path.cwd() / file_path
+            if file_path.is_file():
+                return file_path.read_bytes()
+            return None
+
+        content = element_dict.get("content")
+        if isinstance(content, (bytes, bytearray)):
+            return bytes(content)
+        if isinstance(content, str):
+            return content.encode("utf-8")
+
+        url = self._coerce_text(element_dict.get("url"))
+        if not url:
+            return None
+
+        local_object_key = self._extract_local_route_object_key(url)
+        if local_object_key:
+            try:
+                local_file_path = local_storage.resolve_file_path(local_object_key)
+            except Exception:
+                local_file_path = None
+            if local_file_path is not None and local_file_path.is_file():
+                return local_file_path.read_bytes()
+
+        return await self._download_url_bytes(url)
+
+    async def _download_url_bytes(self, url: str) -> bytes | None:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return None
+        try:
+            async with aiohttp.ClientSession() as client:
+                async with client.get(url) as response:
+                    if response.status != 200:
+                        return None
+                    return await response.read()
+        except Exception:
+            LOGGER.exception("Failed to download element URL: %s", url)
+            return None
+
+    def _resolve_local_storage_provider(self) -> "LocalFileStorageClient" | None:
+        persistence = self._persistence
+        if persistence is None or not persistence.enabled:
+            return None
+
+        from .settings import ensure_local_storage_provider
+
+        try:
+            return ensure_local_storage_provider(persistence.storage_provider)
+        except (TypeError, ValueError):
+            return None
+
+    def _prepare_element_record(
+        self,
+        *,
+        element: Any,
+        thread_id: str,
+        message_id: str,
+    ) -> dict[str, Any] | None:
+        if not isinstance(element, dict):
+            element = self._coerce_element_dict(element)
+        if not isinstance(element, dict):
+            return None
+
+        element_id = self._coerce_text(element.get("id")) or str(uuid4())
+
+        normalized = dict(element)
+        normalized["id"] = element_id
+        normalized["threadId"] = self._coerce_text(normalized.get("threadId")) or thread_id
+        normalized["forId"] = self._coerce_text(normalized.get("forId")) or message_id
+        normalized["type"] = self._coerce_text(normalized.get("type")) or "file"
+        normalized["display"] = self._coerce_text(normalized.get("display")) or "inline"
+        normalized["name"] = self._coerce_text(normalized.get("name")) or "file"
+
+        if "object_key" in normalized and "objectKey" not in normalized:
+            normalized["objectKey"] = normalized.get("object_key")
+        if "chainlit_key" in normalized and "chainlitKey" not in normalized:
+            normalized["chainlitKey"] = normalized.get("chainlit_key")
+        if "for_id" in normalized and "forId" not in normalized:
+            normalized["forId"] = normalized.get("for_id")
+        if "thread_id" in normalized and "threadId" not in normalized:
+            normalized["threadId"] = normalized.get("thread_id")
+
+        normalized.pop("path", None)
+        normalized.pop("content", None)
+
+        return {key: value for key, value in normalized.items() if value is not None}
+
+    def _coerce_element_dict(self, element: Any) -> dict[str, Any]:
+        if isinstance(element, dict):
+            return dict(element)
+
+        result: dict[str, Any] = {}
+        to_dict = getattr(element, "to_dict", None)
+        if callable(to_dict):
+            try:
+                dumped = to_dict()
+            except Exception:
+                dumped = None
+            if isinstance(dumped, dict):
+                result.update(dumped)
+
+        attr_map = {
+            "id": "id",
+            "threadId": "thread_id",
+            "type": "type",
+            "chainlitKey": "chainlit_key",
+            "url": "url",
+            "objectKey": "object_key",
+            "path": "path",
+            "content": "content",
+            "name": "name",
+            "display": "display",
+            "size": "size",
+            "language": "language",
+            "page": "page",
+            "autoPlay": "auto_play",
+            "playerConfig": "player_config",
+            "forId": "for_id",
+            "mime": "mime",
+            "props": "props",
+        }
+        for key, attr_name in attr_map.items():
+            if key in result:
+                continue
+            if hasattr(element, key):
+                result[key] = getattr(element, key)
+                continue
+            if hasattr(element, attr_name):
+                result[key] = getattr(element, attr_name)
+
+        return result
+
+    def _resolve_element_object_key(self, element_dict: dict[str, Any]) -> str | None:
+        object_key = self._coerce_text(element_dict.get("objectKey"))
+        if object_key:
+            return object_key
+        object_key = self._coerce_text(element_dict.get("object_key"))
+        if object_key:
+            return object_key
+        url = self._coerce_text(element_dict.get("url"))
+        if not url:
+            return None
+        return self._extract_local_route_object_key(url)
+
+    def _extract_local_route_object_key(self, url: str) -> str | None:
+        path = urlparse(url).path or ""
+        prefix = f"{LOCAL_STORAGE_ROUTE_PREFIX}/"
+        marker = path.find(prefix)
+        if marker < 0:
+            return None
+        object_key = path[marker + len(prefix) :]
+        if not object_key:
+            return None
+        decoded = unquote(object_key).strip("/")
+        return decoded or None
+
+    def _build_generated_object_key(
+        self,
+        *,
+        thread_id: str,
+        message_id: str,
+        element_id: str,
+        element_name: str,
+    ) -> str:
+        safe_thread = self._safe_path_segment(thread_id)
+        safe_message = self._safe_path_segment(message_id)
+        safe_element = self._safe_path_segment(element_id)
+        safe_name = self._safe_file_name(element_name)
+        return f"{safe_thread}/{safe_message}/{safe_element}/{safe_name}"
+
+    def _safe_path_segment(self, value: str) -> str:
+        rendered = self._coerce_text(value) or "item"
+        sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", rendered).strip("-._")
+        return sanitized or "item"
+
+    def _safe_file_name(self, value: str) -> str:
+        raw_name = Path(value).name
+        if not raw_name:
+            raw_name = "file"
+        sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", raw_name).strip("-._")
+        return sanitized or "file"
+
+    def _guess_mime_type(self, name: str) -> str:
+        guessed, _ = mimetypes.guess_type(name)
+        if guessed:
+            return guessed
+        return "application/octet-stream"
+
+    def _infer_element_type_from_mime(self, mime: str) -> str:
+        normalized = (mime or "").lower()
+        if normalized.startswith("image/"):
+            return "image"
+        if normalized.startswith("audio/"):
+            return "audio"
+        if normalized.startswith("video/"):
+            return "video"
+        if normalized == "application/pdf":
+            return "pdf"
+        if normalized.startswith("text/"):
+            return "text"
+        return "file"
+
+    def _coerce_text(self, value: Any) -> str | None:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        if value is None:
+            return None
+        if isinstance(value, (bytes, bytearray, dict, list, tuple, set)):
+            return None
+        rendered = str(value).strip()
+        return rendered or None
 
     async def _apply_discord_command(self, channel_id: int, command: OutgoingCommand) -> bool:
         if not supports_discord_command(command.command):

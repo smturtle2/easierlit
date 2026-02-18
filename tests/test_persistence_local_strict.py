@@ -24,6 +24,33 @@ def test_ensure_local_storage_provider_rejects_none():
         ensure_local_storage_provider(None)
 
 
+def test_persistence_config_builds_provider_from_local_storage_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHAINLIT_APP_ROOT", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config = EasierlitPersistenceConfig(
+        enabled=True,
+        sqlite_path=".chainlit/easierlit.db",
+        local_storage_dir="~/fablit/workspace/images",
+    )
+
+    expected = (tmp_path / "fablit" / "workspace" / "images").resolve()
+    assert isinstance(config.storage_provider, LocalFileStorageClient)
+    assert config.storage_provider.base_dir == expected
+
+
+def test_persistence_config_rejects_mixed_local_storage_inputs(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHAINLIT_APP_ROOT", str(tmp_path))
+    provider = LocalFileStorageClient(base_dir=tmp_path / "images")
+
+    with pytest.raises(ValueError, match="either local_storage_dir or storage_provider"):
+        EasierlitPersistenceConfig(
+            enabled=True,
+            sqlite_path=".chainlit/easierlit.db",
+            local_storage_dir=str(tmp_path / "other-images"),
+            storage_provider=provider,
+        )
+
+
 def test_local_storage_upload_returns_expected_schema(tmp_path, monkeypatch):
     monkeypatch.setenv("CHAINLIT_APP_ROOT", str(tmp_path))
     provider = LocalFileStorageClient(base_dir=tmp_path / "public" / "easierlit")

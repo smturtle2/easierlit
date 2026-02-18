@@ -20,6 +20,7 @@ def _clear_chainlit_hooks() -> None:
     config.code.password_auth_callback = None
     config.code.data_layer = None
     chainlit_entry._DEFAULT_DATA_LAYER_REGISTERED = False
+    chainlit_entry._LOCAL_STORAGE_PROVIDER = None
 
 
 
@@ -220,7 +221,7 @@ def test_default_sqlite_data_layer_uses_default_local_storage_provider(tmp_path,
 
 
 
-def test_default_sqlite_data_layer_rejects_missing_storage_provider(tmp_path):
+def test_default_sqlite_data_layer_accepts_missing_storage_provider(tmp_path):
     runtime = get_runtime()
     runtime.unbind()
     _clear_chainlit_hooks()
@@ -234,12 +235,12 @@ def test_default_sqlite_data_layer_rejects_missing_storage_provider(tmp_path):
 
     try:
         db_path = tmp_path / "missing-provider.db"
-        with pytest.raises(ValueError, match="must be a LocalFileStorageClient"):
-            EasierlitPersistenceConfig(
-                enabled=True,
-                sqlite_path=str(db_path),
-                storage_provider=None,
-            )
+        persistence = EasierlitPersistenceConfig(
+            enabled=True,
+            sqlite_path=str(db_path),
+            storage_provider=None,
+        )
+        assert isinstance(persistence.storage_provider, LocalFileStorageClient)
     finally:
         runtime.unbind()
         _clear_chainlit_hooks()

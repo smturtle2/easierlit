@@ -32,7 +32,7 @@ from easierlit.settings import (
     assert_local_storage_operational,
     ensure_local_storage_provider,
 )
-from easierlit.storage.local import LOCAL_STORAGE_ROUTE_PREFIX
+from easierlit.storage.local import LOCAL_STORAGE_ROUTE_PREFIX, LocalFileStorageClient
 from easierlit.sqlite_bootstrap import ensure_sqlite_schema
 
 LOGGER = logging.getLogger(__name__)
@@ -43,6 +43,7 @@ _WORKER_FAILURE_UI_NOTIFIED = False
 _DISCORD_BRIDGE: EasierlitDiscordBridge | None = None
 _DEFAULT_DATA_LAYER_REGISTERED = False
 _LOCAL_STORAGE_ROUTE_REGISTERED = False
+_LOCAL_STORAGE_PROVIDER: LocalFileStorageClient | None = None
 
 
 def _summarize_worker_error(traceback_text: str) -> str:
@@ -89,7 +90,10 @@ def _apply_runtime_configuration() -> None:
     if _CONFIG_APPLIED:
         return
 
-    _register_local_storage_route_if_needed()
+    persistence = RUNTIME.get_persistence() or EasierlitPersistenceConfig()
+    if persistence.enabled:
+        _ensure_local_storage_provider_initialized()
+        _register_local_storage_route_if_needed()
     _apply_auth_configuration()
     _register_default_data_layer_if_needed()
 
@@ -97,6 +101,20 @@ def _apply_runtime_configuration() -> None:
     config.ui.default_sidebar_state = "open"
     config.ui.cot = "full"
     _CONFIG_APPLIED = True
+
+
+def _ensure_local_storage_provider_initialized() -> LocalFileStorageClient:
+    global _LOCAL_STORAGE_PROVIDER
+    if _LOCAL_STORAGE_PROVIDER is not None:
+        return _LOCAL_STORAGE_PROVIDER
+
+    persistence = RUNTIME.get_persistence() or EasierlitPersistenceConfig()
+    if isinstance(persistence.storage_provider, LocalFileStorageClient):
+        _LOCAL_STORAGE_PROVIDER = persistence.storage_provider
+        return _LOCAL_STORAGE_PROVIDER
+
+    _LOCAL_STORAGE_PROVIDER = ensure_local_storage_provider(persistence.storage_provider)
+    return _LOCAL_STORAGE_PROVIDER
 
 
 def _register_local_storage_route_if_needed() -> None:
@@ -116,6 +134,12 @@ def _register_local_storage_route_if_needed() -> None:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         if not file_path.is_file():
+            LOGGER.warning(
+                "Local storage file not found: object_key=%s resolved_path=%s base_dir=%s",
+                object_key,
+                file_path,
+                storage_provider.base_dir,
+            )
             raise HTTPException(status_code=404, detail="File not found.")
 
         return FileResponse(path=str(file_path))
@@ -125,25 +149,7 @@ def _register_local_storage_route_if_needed() -> None:
 
 def _resolve_local_storage_provider_for_read():
     try:
-        data_layer = get_data_layer()
-    except Exception:
-        data_layer = None
-
-    for attr in ("storage_provider", "storage_client"):
-        provider = getattr(data_layer, attr, None) if data_layer is not None else None
-        if provider is None:
-            continue
-        try:
-            return ensure_local_storage_provider(provider)
-        except (TypeError, ValueError):
-            continue
-
-    persistence = RUNTIME.get_persistence()
-    if persistence is None:
-        raise HTTPException(status_code=404, detail="Local storage is not configured.")
-
-    try:
-        return ensure_local_storage_provider(persistence.storage_provider)
+        return _ensure_local_storage_provider_initialized()
     except (TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=404,
@@ -193,7 +199,7 @@ def _register_default_data_layer_if_needed() -> None:
     persistence = RUNTIME.get_persistence() or EasierlitPersistenceConfig()
     db_path = ensure_sqlite_schema(persistence.sqlite_path).resolve()
     conninfo = f"sqlite+aiosqlite:///{db_path}"
-    storage_provider = ensure_local_storage_provider(persistence.storage_provider)
+    storage_provider = _ensure_local_storage_provider_initialized()
 
     @cl.data_layer
     def _easierlit_default_data_layer():
@@ -253,9 +259,8 @@ async def _on_app_startup() -> None:
         LOGGER.exception("Failed to initialize Chainlit data layer at startup.")
         data_layer = None
 
-    if _DEFAULT_DATA_LAYER_REGISTERED and data_layer is not None:
-        storage_provider = getattr(data_layer, "storage_provider", None)
-        ensure_local_storage_provider(storage_provider)
+    if _DEFAULT_DATA_LAYER_REGISTERED:
+        storage_provider = _ensure_local_storage_provider_initialized()
         await assert_local_storage_operational(storage_provider)
 
     if not require_login():
@@ -273,7 +278,7 @@ async def _on_app_startup() -> None:
 @cl.on_app_shutdown
 async def _on_app_shutdown() -> None:
     global _APP_CLOSED_WARNING_EMITTED, _CONFIG_APPLIED, _WORKER_FAILURE_UI_NOTIFIED
-    global _DEFAULT_DATA_LAYER_REGISTERED
+    global _DEFAULT_DATA_LAYER_REGISTERED, _LOCAL_STORAGE_PROVIDER
 
     await _stop_discord_bridge_if_running()
     await RUNTIME.stop_dispatcher()
@@ -293,6 +298,7 @@ async def _on_app_shutdown() -> None:
         _APP_CLOSED_WARNING_EMITTED = False
         _WORKER_FAILURE_UI_NOTIFIED = False
         _DEFAULT_DATA_LAYER_REGISTERED = False
+        _LOCAL_STORAGE_PROVIDER = None
 
 
 @cl.on_chat_start
