@@ -10,6 +10,7 @@ class IncomingMessage(BaseModel):
     session_id: str
     message_id: str
     content: str
+    elements: list[Any] = Field(default_factory=list)
     author: str
     created_at: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

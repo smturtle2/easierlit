@@ -402,6 +402,70 @@ def test_get_messages_resolves_url_from_object_key_and_marks_missing_source():
     assert missing_source_element["source"] is None
 
 
+@pytest.mark.parametrize(
+    "file_exists, expected_source_kind",
+    [
+        (True, "path"),
+        (False, "url"),
+    ],
+)
+def test_get_messages_resolves_object_key_source_with_minimal_branches(
+    tmp_path, file_exists: bool, expected_source_kind: str
+):
+    local_file = tmp_path / "images" / "user-1" / "img.png"
+    if file_exists:
+        local_file.parent.mkdir(parents=True, exist_ok=True)
+        local_file.write_bytes(b"payload")
+
+    class _FakeStorageProvider:
+        def resolve_file_path(self, _object_key: str):
+            if file_exists:
+                return local_file
+            return "/tmp/definitely-missing/local-image.png"
+
+        async def get_read_url(self, object_key: str) -> str:
+            return f"/easierlit/local/{object_key}"
+
+    class _FakeDataLayerWithObjectKeyElement(FakeDataLayer):
+        def __init__(self):
+            super().__init__()
+            self.storage_provider = _FakeStorageProvider()
+
+        async def get_thread(self, thread_id: str):
+            self.requested_threads.append(thread_id)
+            return {
+                "id": thread_id,
+                "name": "Thread 1",
+                "steps": [{"id": "msg-1", "type": "assistant_message", "output": "hi"}],
+                "elements": [
+                    {
+                        "id": "el-1",
+                        "type": "image",
+                        "forId": "msg-1",
+                        "objectKey": "user-1/img.png",
+                        "url": "/stale/url",
+                    }
+                ],
+            }
+
+    fake = _FakeDataLayerWithObjectKeyElement()
+    app = EasierlitApp(data_layer_getter=lambda: fake)
+    messages_payload = app.get_messages("thread-1")
+
+    element = messages_payload["messages"][0]["elements"][0]
+    assert element["url"] == "/easierlit/local/user-1/img.png"
+    assert element["has_source"] is True
+    assert element["source"]["kind"] == expected_source_kind
+    if file_exists:
+        assert element["path"] == str(local_file)
+        assert element["source"] == {"kind": "path", "value": str(local_file)}
+    else:
+        assert element["source"] == {
+            "kind": "url",
+            "value": "/easierlit/local/user-1/img.png",
+        }
+
+
 def test_new_thread_creates_when_missing():
     fake = FakeDataLayer()
     app = EasierlitApp(

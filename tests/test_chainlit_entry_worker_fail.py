@@ -1,7 +1,10 @@
 import asyncio
 from contextlib import contextmanager
+import os
 from types import SimpleNamespace
 
+import chainlit.data.sql_alchemy as chainlit_sql_alchemy
+from chainlit.config import config
 import pytest
 from fastapi.testclient import TestClient
 
@@ -62,6 +65,7 @@ def _sample_message():
     return SimpleNamespace(
         id="msg-1",
         content="/help",
+        elements=[],
         author="User",
         created_at=None,
         metadata=None,
@@ -215,6 +219,23 @@ def test_on_message_registers_session_for_non_discord_client():
     assert calls == [("thread-1", "session-1")]
 
 
+def test_on_message_enqueues_incoming_elements():
+    runtime = get_runtime()
+    app = EasierlitApp()
+    client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
+    runtime.bind(client=client, app=app)
+
+    fake_session = SimpleNamespace(thread_id="thread-1", id="session-1", client_type="webapp")
+    message = _sample_message()
+    message.elements = [{"id": "el-1", "path": "/tmp/random.jpg"}]
+
+    with _swap_attr(chainlit_entry.cl, "context", SimpleNamespace(session=fake_session)):
+        asyncio.run(chainlit_entry._on_message(message))
+
+    incoming = app.recv(timeout=1.0)
+    assert incoming.elements == [{"id": "el-1", "path": "/tmp/random.jpg"}]
+
+
 def test_start_and_stop_discord_bridge_lifecycle():
     runtime = get_runtime()
     runtime.bind(
@@ -316,6 +337,31 @@ def test_local_storage_route_serves_file_without_public_mount(tmp_path):
     assert response.content == b"payload"
 
 
+def test_local_storage_route_missing_file_returns_404_not_spa_html(tmp_path):
+    runtime = get_runtime()
+    persistence = EasierlitPersistenceConfig(
+        enabled=True,
+        sqlite_path=str(tmp_path / "route-test.db"),
+        local_storage_dir=tmp_path / "outside",
+    )
+    runtime.bind(
+        client=EasierlitClient(run_func=lambda _app: None, worker_mode="thread"),
+        app=EasierlitApp(),
+        persistence=persistence,
+    )
+
+    chainlit_entry._CONFIG_APPLIED = False
+    chainlit_entry._LOCAL_STORAGE_PROVIDER = None
+    chainlit_entry._LOCAL_STORAGE_ROUTE_REGISTERED = False
+    chainlit_entry._apply_runtime_configuration()
+
+    with TestClient(chainlit_entry.chainlit_app) as client:
+        response = client.get("/easierlit/local/not-found/random.jpg")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "File not found."
+
+
 def test_local_storage_route_resolves_tilde_local_storage_dir(tmp_path, monkeypatch):
     runtime = get_runtime()
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -377,3 +423,126 @@ def test_local_storage_route_uses_runtime_persistence_provider_only(tmp_path, mo
 
     assert response.status_code == 200
     assert response.content == b"payload"
+
+
+def test_local_storage_route_uses_latest_runtime_persistence_provider_after_rebind(tmp_path):
+    runtime = get_runtime()
+
+    first_persistence = EasierlitPersistenceConfig(
+        enabled=True,
+        sqlite_path=str(tmp_path / "route-first.db"),
+        local_storage_dir=tmp_path / "images-first",
+    )
+    first_provider = _resolve_local_storage_provider(first_persistence)
+    runtime.bind(
+        client=EasierlitClient(run_func=lambda _app: None, worker_mode="thread"),
+        app=EasierlitApp(),
+        persistence=first_persistence,
+    )
+    chainlit_entry._CONFIG_APPLIED = False
+    chainlit_entry._LOCAL_STORAGE_PROVIDER = None
+    chainlit_entry._LOCAL_STORAGE_ROUTE_REGISTERED = False
+    chainlit_entry._apply_runtime_configuration()
+    first_uploaded = asyncio.run(first_provider.upload_file("user-1/first.png", b"first"))
+
+    with TestClient(chainlit_entry.chainlit_app) as client:
+        first_response = client.get(first_uploaded["url"])
+    assert first_response.status_code == 200
+    assert first_response.content == b"first"
+
+    second_persistence = EasierlitPersistenceConfig(
+        enabled=True,
+        sqlite_path=str(tmp_path / "route-second.db"),
+        local_storage_dir=tmp_path / "images-second",
+    )
+    second_provider = _resolve_local_storage_provider(second_persistence)
+    runtime.unbind()
+    runtime.bind(
+        client=EasierlitClient(run_func=lambda _app: None, worker_mode="thread"),
+        app=EasierlitApp(),
+        persistence=second_persistence,
+    )
+    chainlit_entry._CONFIG_APPLIED = False
+    # Intentionally keep route registration and previous provider state.
+    second_uploaded = asyncio.run(second_provider.upload_file("user-2/second.png", b"second"))
+
+    with TestClient(chainlit_entry.chainlit_app) as client:
+        second_response = client.get(second_uploaded["url"])
+    assert second_response.status_code == 200
+    assert second_response.content == b"second"
+
+
+def test_default_sqlite_data_layer_get_thread_refreshes_element_url_from_object_key(
+    tmp_path, monkeypatch
+):
+    runtime = get_runtime()
+    runtime.unbind()
+    config.code.data_layer = None
+
+    previous_database_url = os.environ.get("DATABASE_URL")
+    previous_literal_api_key = os.environ.get("LITERAL_API_KEY")
+    os.environ.pop("DATABASE_URL", None)
+    os.environ.pop("LITERAL_API_KEY", None)
+
+    chainlit_entry._CONFIG_APPLIED = False
+    chainlit_entry._LOCAL_STORAGE_PROVIDER = None
+
+    class _FakeSQLAlchemyDataLayer:
+        def __init__(self, conninfo: str, storage_provider=None):
+            self._conninfo = conninfo
+            self.storage_provider = storage_provider
+
+        async def get_thread(self, thread_id: str):
+            return {
+                "id": thread_id,
+                "elements": [
+                    {
+                        "id": "el-1",
+                        "objectKey": "user-1/image.png",
+                        "url": "/stale/url",
+                    },
+                    {
+                        "id": "el-2",
+                        "url": "https://example.com/keep.png",
+                    },
+                ],
+            }
+
+    class _FakeStorageProvider:
+        async def get_read_url(self, object_key: str) -> str:
+            return f"/easierlit/local/{object_key}"
+
+    monkeypatch.setattr(chainlit_sql_alchemy, "SQLAlchemyDataLayer", _FakeSQLAlchemyDataLayer)
+
+    db_path = tmp_path / "refresh-thread-url.db"
+    runtime.bind(
+        client=EasierlitClient(run_func=lambda _app: None, worker_mode="thread"),
+        app=EasierlitApp(),
+        persistence=EasierlitPersistenceConfig(enabled=True, sqlite_path=str(db_path)),
+    )
+
+    try:
+        chainlit_entry._apply_runtime_configuration()
+        assert config.code.data_layer is not None
+
+        data_layer = config.code.data_layer()
+        data_layer.storage_provider = _FakeStorageProvider()
+        thread = asyncio.run(data_layer.get_thread("thread-1"))
+
+        assert thread["elements"][0]["url"] == "/easierlit/local/user-1/image.png"
+        assert thread["elements"][1]["url"] == "https://example.com/keep.png"
+    finally:
+        runtime.unbind()
+        config.code.data_layer = None
+        chainlit_entry._CONFIG_APPLIED = False
+        chainlit_entry._LOCAL_STORAGE_PROVIDER = None
+
+        if previous_database_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous_database_url
+
+        if previous_literal_api_key is None:
+            os.environ.pop("LITERAL_API_KEY", None)
+        else:
+            os.environ["LITERAL_API_KEY"] = previous_literal_api_key

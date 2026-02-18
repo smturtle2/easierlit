@@ -140,6 +140,35 @@ def test_existing_object_key_persists_file_into_local_storage_when_missing(tmp_p
     assert persisted_path.read_bytes() == source_payload
 
 
+def test_existing_object_key_is_preserved_when_local_recovery_fails(tmp_path):
+    data_layer = _FakeSQLAlchemyLikeDataLayer()
+    runtime = _build_runtime(tmp_path, data_layer)
+
+    object_key = "thread-1/msg-1/el-1/random.jpg"
+    command = OutgoingCommand(
+        command="add_message",
+        thread_id="thread-1",
+        message_id="msg-1",
+        content="hello",
+        author="Assistant",
+        elements=[
+            {
+                "id": "el-1",
+                "type": "image",
+                "name": "random.jpg",
+                "objectKey": object_key,
+                "url": "file:///cannot-download-random.jpg",
+            }
+        ],
+    )
+    asyncio.run(runtime.apply_outgoing_command(command))
+
+    assert len(data_layer.element_rows) == 1
+    element_row = data_layer.element_rows[0]
+    assert element_row["objectKey"] == object_key
+    assert "url" not in element_row
+
+
 def test_realtime_and_sessionless_paths_share_same_element_reference(tmp_path):
     data_layer = _FakeSQLAlchemyLikeDataLayer()
     runtime = _build_runtime(tmp_path, data_layer)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+from pathlib import Path
 import queue
 import threading
 from collections.abc import Callable
@@ -534,26 +535,35 @@ class EasierlitApp:
         *,
         data_layer: Any | None = None,
     ) -> dict[str, Any] | None:
-        url = self._coerce_non_empty_string(element.get("url"))
-        if url is None:
-            object_key = self._coerce_non_empty_string(
-                element.get("objectKey") or element.get("object_key")
+        object_key = self._coerce_non_empty_string(
+            element.get("objectKey") or element.get("object_key")
+        )
+        if object_key is not None:
+            resolved_url = self._resolve_element_url_from_object_key(
+                object_key=object_key,
+                data_layer=data_layer,
             )
-            if object_key is not None:
-                resolved_url = self._resolve_element_url_from_object_key(
-                    object_key=object_key,
-                    data_layer=data_layer,
-                )
+            resolved_path = self._resolve_element_path_from_object_key(
+                object_key=object_key,
+                data_layer=data_layer,
+            )
+            if resolved_path is not None:
+                element["path"] = resolved_path
                 if resolved_url is not None:
                     element["url"] = resolved_url
-                    url = resolved_url
+                return {"kind": "path", "value": resolved_path}
 
-        if url is not None:
-            return {"kind": "url", "value": url}
+            if resolved_url is not None:
+                element["url"] = resolved_url
+                return {"kind": "url", "value": resolved_url}
 
         path = self._coerce_non_empty_string(element.get("path"))
         if path is not None:
             return {"kind": "path", "value": path}
+
+        url = self._coerce_non_empty_string(element.get("url"))
+        if url is not None:
+            return {"kind": "url", "value": url}
 
         content = element.get("content")
         if isinstance(content, (bytes, bytearray)):
@@ -561,9 +571,6 @@ class EasierlitApp:
         if isinstance(content, str) and content:
             return {"kind": "bytes", "value": {"length": len(content.encode("utf-8"))}}
 
-        object_key = self._coerce_non_empty_string(
-            element.get("objectKey") or element.get("object_key")
-        )
         if object_key is not None:
             return {"kind": "objectKey", "value": object_key}
 
@@ -599,6 +606,33 @@ class EasierlitApp:
         if isinstance(maybe_url, str) and maybe_url.strip():
             return maybe_url
         return None
+
+    def _resolve_element_path_from_object_key(
+        self,
+        *,
+        object_key: str,
+        data_layer: Any | None = None,
+    ) -> str | None:
+        storage = self._resolve_storage_provider(data_layer)
+        if storage is None:
+            return None
+
+        resolve_file_path = getattr(storage, "resolve_file_path", None)
+        if not callable(resolve_file_path):
+            return None
+
+        try:
+            maybe_path = resolve_file_path(object_key)
+        except Exception:
+            return None
+
+        if maybe_path is None:
+            return None
+
+        path = maybe_path if isinstance(maybe_path, Path) else Path(str(maybe_path))
+        if not path.is_file():
+            return None
+        return str(path)
 
     def _resolve_storage_provider(self, data_layer: Any | None):
         if data_layer is None:

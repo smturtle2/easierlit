@@ -578,6 +578,22 @@ class RuntimeRegistry:
         object_key = self._resolve_element_object_key(element_dict)
         url = self._coerce_text(element_dict.get("url"))
 
+        async def _resolve_uploaded_reference(
+            uploaded: dict[str, Any],
+            *,
+            fallback_object_key: str,
+        ) -> tuple[str, str | None]:
+            resolved_object_key = (
+                self._coerce_text(uploaded.get("object_key")) or fallback_object_key
+            )
+            uploaded_url = self._coerce_text(uploaded.get("url"))
+            if uploaded_url:
+                return resolved_object_key, uploaded_url
+            try:
+                return resolved_object_key, await local_storage.get_read_url(resolved_object_key)
+            except Exception:
+                return resolved_object_key, None
+
         if object_key:
             try:
                 url = await local_storage.get_read_url(object_key)
@@ -586,14 +602,18 @@ class RuntimeRegistry:
                 if payload is None:
                     url = None
                 else:
-                    uploaded = await local_storage.upload_file(
-                        object_key=object_key,
-                        data=payload,
-                        mime=mime,
-                        overwrite=True,
-                    )
-                    object_key = self._coerce_text(uploaded.get("object_key")) or object_key
-                    url = self._coerce_text(uploaded.get("url")) or None
+                    try:
+                        uploaded = await local_storage.upload_file(
+                            object_key=object_key,
+                            data=payload,
+                            mime=mime,
+                            overwrite=True,
+                        )
+                        object_key, url = await _resolve_uploaded_reference(
+                            uploaded, fallback_object_key=object_key
+                        )
+                    except Exception:
+                        url = None
         else:
             payload = await self._resolve_element_payload(element_dict, local_storage=local_storage)
             if payload is None:
@@ -615,10 +635,11 @@ class RuntimeRegistry:
                 mime=mime,
                 overwrite=True,
             )
-            object_key = self._coerce_text(uploaded.get("object_key")) or object_key
-            url = self._coerce_text(uploaded.get("url")) or url
+            object_key, url = await _resolve_uploaded_reference(
+                uploaded, fallback_object_key=object_key
+            )
 
-        if not object_key or not url:
+        if not object_key and not url:
             LOGGER.warning(
                 "Skipping element '%s' for message '%s': failed to resolve objectKey/url.",
                 element_name,

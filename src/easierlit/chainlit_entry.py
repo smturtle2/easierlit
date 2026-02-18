@@ -105,8 +105,6 @@ def _apply_runtime_configuration() -> None:
 
 def _ensure_local_storage_provider_initialized() -> LocalFileStorageClient:
     global _LOCAL_STORAGE_PROVIDER
-    if _LOCAL_STORAGE_PROVIDER is not None:
-        return _LOCAL_STORAGE_PROVIDER
 
     persistence = RUNTIME.get_persistence() or EasierlitPersistenceConfig()
     _LOCAL_STORAGE_PROVIDER = _resolve_local_storage_provider(persistence)
@@ -140,6 +138,7 @@ def _register_local_storage_route_if_needed() -> None:
 
         return FileResponse(path=str(file_path))
 
+    _promote_local_storage_route_before_spa_fallback(route_path)
     _LOCAL_STORAGE_ROUTE_REGISTERED = True
 
 
@@ -151,6 +150,28 @@ def __resolve_local_storage_provider_for_read():
             status_code=404,
             detail="Local storage provider is unavailable.",
         ) from exc
+
+
+def _promote_local_storage_route_before_spa_fallback(route_path: str) -> None:
+    routes = chainlit_app.router.routes
+    local_index = next(
+        (index for index, route in enumerate(routes) if getattr(route, "path", None) == route_path),
+        None,
+    )
+    fallback_index = next(
+        (
+            index
+            for index, route in enumerate(routes)
+            if getattr(route, "path", None) == "/{full_path:path}"
+        ),
+        None,
+    )
+    if local_index is None or fallback_index is None:
+        return
+    if local_index < fallback_index:
+        return
+    route = routes.pop(local_index)
+    routes.insert(fallback_index, route)
 
 
 def _apply_auth_configuration() -> None:
@@ -216,6 +237,28 @@ def _register_default_data_layer_if_needed() -> None:
                 except Exception:
                     return element
                 return element
+
+            async def get_thread(self, thread_id: str):
+                thread = await super().get_thread(thread_id)
+                if not isinstance(thread, dict):
+                    return thread
+
+                elements = thread.get("elements")
+                if not isinstance(elements, list):
+                    return thread
+
+                for element in elements:
+                    if not isinstance(element, dict):
+                        continue
+                    object_key = element.get("objectKey")
+                    if not isinstance(object_key, str) or not object_key.strip():
+                        continue
+                    try:
+                        element["url"] = await self.storage_provider.get_read_url(object_key)
+                    except Exception:
+                        continue
+
+                return thread
 
         return _EasierlitLocalSQLAlchemyDataLayer(
             conninfo=conninfo,
@@ -347,6 +390,7 @@ async def _on_message(message: cl.Message) -> None:
         session_id=session.id,
         message_id=message.id,
         content=message.content or "",
+        elements=getattr(message, "elements", None) or [],
         author=message.author,
         created_at=message.created_at,
         metadata=message.metadata or {},
