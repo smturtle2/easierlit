@@ -579,11 +579,21 @@ class RuntimeRegistry:
         url = self._coerce_text(element_dict.get("url"))
 
         if object_key:
-            if not url:
-                try:
-                    url = await local_storage.get_read_url(object_key)
-                except Exception:
+            try:
+                url = await local_storage.get_read_url(object_key)
+            except Exception:
+                payload = await self._resolve_element_payload(element_dict, local_storage=local_storage)
+                if payload is None:
                     url = None
+                else:
+                    uploaded = await local_storage.upload_file(
+                        object_key=object_key,
+                        data=payload,
+                        mime=mime,
+                        overwrite=True,
+                    )
+                    object_key = self._coerce_text(uploaded.get("object_key")) or object_key
+                    url = self._coerce_text(uploaded.get("url")) or None
         else:
             payload = await self._resolve_element_payload(element_dict, local_storage=local_storage)
             if payload is None:
