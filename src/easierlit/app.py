@@ -26,6 +26,14 @@ class EasierlitApp:
     """
 
     _THOUGHT_TOOL_NAME = "Reasoning"
+    _MESSAGE_STEP_TYPES = frozenset(
+        {
+            "user_message",
+            "assistant_message",
+            "system_message",
+            "tool",
+        }
+    )
 
     def __init__(
         self,
@@ -212,42 +220,26 @@ class EasierlitApp:
 
         return self._runtime.run_coroutine_sync(_get_thread())
 
-    def get_history(self, thread_id: str) -> dict:
-        """
-        Return thread metadata and one ordered history list.
-
-        `items` preserves the original order in `thread["steps"]` and includes
-        both message steps and non-message steps.
-        """
+    def get_messages(self, thread_id: str) -> dict:
+        """Return thread metadata and one ordered list of messages/tool steps."""
         thread = self.get_thread(thread_id)
-
-        raw_steps = thread.get("steps")
-        step_items = raw_steps if isinstance(raw_steps, list) else []
-        items = [item for item in step_items if isinstance(item, dict)]
-
-        thread_metadata = dict(thread)
-        thread_metadata.pop("steps", None)
-
-        return {
-            "thread": thread_metadata,
-            "items": items,
-        }
+        return self._build_messages_payload(thread)
 
     def timeline(self, thread_id: str) -> dict:
-        """Backward-compatible alias for `get_history`."""
-        return self.get_history(thread_id)
+        """Backward-compatible alias for `get_messages`."""
+        return self.get_messages(thread_id)
 
     def get_thread_timeline(self, thread_id: str) -> dict:
-        """Backward-compatible alias for `get_history`."""
-        return self.get_history(thread_id)
+        """Backward-compatible alias for `get_messages`."""
+        return self.get_messages(thread_id)
 
     def get_thread_messages_and_steps(self, thread_id: str) -> dict:
-        """Backward-compatible alias for `get_history`."""
-        return self.get_history(thread_id)
+        """Backward-compatible alias for `get_messages`."""
+        return self.get_messages(thread_id)
 
     def get_timeline(self, thread_id: str) -> dict:
-        """Backward-compatible alias for `get_history`."""
-        return self.get_history(thread_id)
+        """Backward-compatible alias for `get_messages`."""
+        return self.get_messages(thread_id)
 
     def update_thread(
         self,
@@ -438,3 +430,54 @@ class EasierlitApp:
             for thread in threads.data
         ]
         return threads
+
+    def _build_messages_payload(self, thread: dict) -> dict:
+        raw_steps = thread.get("steps")
+        step_items = raw_steps if isinstance(raw_steps, list) else []
+        messages = self._filter_message_steps(step_items)
+
+        raw_elements = thread.get("elements")
+        element_items = raw_elements if isinstance(raw_elements, list) else []
+        elements_by_for_id = self._index_elements_by_for_id(element_items)
+
+        enriched_messages: list[dict] = []
+        for message in messages:
+            message_copy = dict(message)
+            message_id = message_copy.get("id")
+            if isinstance(message_id, str):
+                related_elements = elements_by_for_id.get(message_id, [])
+                message_copy["elements"] = [dict(element) for element in related_elements]
+            else:
+                message_copy["elements"] = []
+            enriched_messages.append(message_copy)
+
+        thread_metadata = dict(thread)
+        thread_metadata.pop("steps", None)
+
+        return {
+            "thread": thread_metadata,
+            "messages": enriched_messages,
+        }
+
+    def _filter_message_steps(self, steps: list[dict]) -> list[dict]:
+        filtered_steps: list[dict] = []
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            step_type = step.get("type")
+            if not isinstance(step_type, str):
+                continue
+            if step_type in self._MESSAGE_STEP_TYPES:
+                filtered_steps.append(step)
+        return filtered_steps
+
+    def _index_elements_by_for_id(self, elements: list[dict]) -> dict[str, list[dict]]:
+        elements_by_for_id: dict[str, list[dict]] = {}
+        for element in elements:
+            if not isinstance(element, dict):
+                continue
+            for_id = element.get("forId")
+            if not isinstance(for_id, str) or not for_id:
+                continue
+            elements_by_for_id.setdefault(for_id, []).append(element)
+        return elements_by_for_id

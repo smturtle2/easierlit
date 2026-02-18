@@ -40,6 +40,7 @@ def _reset_runtime_state():
     chainlit_entry._APP_CLOSED_WARNING_EMITTED = False
     chainlit_entry._WORKER_FAILURE_UI_NOTIFIED = False
     chainlit_entry._DISCORD_BRIDGE = None
+    chainlit_entry._DEFAULT_DATA_LAYER_REGISTERED = False
 
     yield
 
@@ -47,6 +48,7 @@ def _reset_runtime_state():
     chainlit_entry._APP_CLOSED_WARNING_EMITTED = False
     chainlit_entry._WORKER_FAILURE_UI_NOTIFIED = False
     chainlit_entry._DISCORD_BRIDGE = None
+    chainlit_entry._DEFAULT_DATA_LAYER_REGISTERED = False
 
 
 def _sample_message():

@@ -87,7 +87,7 @@ EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # to
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
-EasierlitApp.get_history(thread_id) -> dict
+EasierlitApp.get_messages(thread_id) -> dict
 EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
@@ -147,11 +147,12 @@ Persistence setup example:
 
 ```python
 from easierlit import EasierlitPersistenceConfig, EasierlitServer
+from chainlit.data.storage_clients.s3 import S3StorageClient
 
 persistence = EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=None,  # Optional override. `None` explicitly disables file/image storage persistence.
+    storage_provider=S3StorageClient(...),  # Optional override. Must be an S3StorageClient.
 )
 
 server = EasierlitServer(client=client, persistence=persistence)
@@ -209,7 +210,7 @@ Available methods on `EasierlitApp`:
 
 - `list_threads(first=20, cursor=None, search=None, user_identifier=None)`
 - `get_thread(thread_id)`
-- `get_history(thread_id) -> dict`
+- `get_messages(thread_id) -> dict`
 - `new_thread(name=None, metadata=None, tags=None) -> str`
 - `update_thread(thread_id, name=None, metadata=None, tags=None)`
 - `delete_thread(thread_id)`
@@ -219,7 +220,9 @@ Behavior details:
 - Data layer is required for thread CRUD.
 - `new_thread` auto-generates a unique thread id and returns it.
 - `update_thread` updates only when target thread already exists.
-- `get_history` returns thread metadata and one ordered `items` list from `thread["steps"]`.
+- `get_messages` returns thread metadata and one ordered `messages` list.
+- `get_messages` keeps only `user_message`/`assistant_message`/`system_message`/`tool` step types.
+- `get_messages` maps `thread["elements"]` by `forId` so each returned message contains an `elements` list.
 - If auth is configured, `new_thread` and `update_thread` auto-resolve owner user and save with `user_id`.
 - In SQLite SQLAlchemyDataLayer, `tags` list is JSON-serialized on write and normalized to list on read.
 

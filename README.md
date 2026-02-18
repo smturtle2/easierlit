@@ -139,7 +139,7 @@ EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # to
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
-EasierlitApp.get_history(thread_id) -> dict
+EasierlitApp.get_messages(thread_id) -> dict
 EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
@@ -186,7 +186,7 @@ Typical Easierlit setup:
 - keep `auth=None` and `persistence=None` for default enabled auth + persistence
 - optionally set `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` for non-default credentials
 - set `EASIERLIT_S3_BUCKET` (or `BUCKET_NAME`) to override the default S3 bucket name
-- pass `persistence=EasierlitPersistenceConfig(storage_provider=...)` to override storage backend
+- pass `persistence=EasierlitPersistenceConfig(storage_provider=S3StorageClient(...))` to override S3 backend
 - or pass explicit `auth=EasierlitAuthConfig(...)`
 
 Discord bot setup:
@@ -214,7 +214,7 @@ Thread APIs:
 
 - `app.list_threads(...)`
 - `app.get_thread(thread_id)`
-- `app.get_history(thread_id)`
+- `app.get_messages(thread_id)`
 - `app.new_thread(...)`
 - `app.update_thread(...)`
 - `app.delete_thread(thread_id)`
@@ -224,7 +224,9 @@ Behavior highlights:
 - `app.add_message(...)` returns generated `message_id`.
 - `app.add_tool(...)` stores tool-call steps with tool name shown as step author/name.
 - `app.add_thought(...)` is the same tool-call path with fixed tool name `Reasoning`.
-- `app.get_history(...)` returns thread metadata plus one ordered `items` list.
+- `app.get_messages(...)` returns thread metadata plus one ordered `messages` list.
+- `app.get_messages(...)` includes `user_message`/`assistant_message`/`system_message`/`tool` and excludes run-family steps.
+- `app.get_messages(...)` maps `thread["elements"]` into each message via `forId`, so image/file elements are available per message.
 - `app.new_thread(...)` auto-generates a unique `thread_id` and returns it.
 - `app.update_thread(...)` updates only when thread already exists.
 - With auth enabled, both `app.new_thread(...)` and `app.update_thread(...)` auto-assign thread ownership.

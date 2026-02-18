@@ -45,6 +45,7 @@ def _clear_s3_env():
 def _clear_chainlit_hooks() -> None:
     config.code.password_auth_callback = None
     config.code.data_layer = None
+    chainlit_entry._DEFAULT_DATA_LAYER_REGISTERED = False
 
 
 def test_default_sqlite_data_layer_is_registered_when_no_external_db(tmp_path):
@@ -142,8 +143,37 @@ def test_default_sqlite_data_layer_passes_storage_provider(tmp_path, monkeypatch
 
     chainlit_entry._CONFIG_APPLIED = False
 
+    from chainlit.data.storage_clients import s3 as chainlit_s3
+
+    class _FakeS3StorageClient:
+        def __init__(self, bucket: str = "test-bucket", **_kwargs):
+            self.bucket = bucket
+            self.client = object()
+
+        async def upload_file(
+            self,
+            object_key: str,
+            data,
+            mime: str = "application/octet-stream",
+            overwrite: bool = True,
+            content_disposition=None,
+        ):
+            del data, mime, overwrite, content_disposition
+            return {"object_key": object_key, "url": f"https://example.com/{object_key}"}
+
+        async def delete_file(self, _object_key: str) -> bool:
+            return True
+
+        async def get_read_url(self, object_key: str) -> str:
+            return f"https://example.com/{object_key}"
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(chainlit_s3, "S3StorageClient", _FakeS3StorageClient)
+
     db_path = tmp_path / "storage-provider.db"
-    storage_provider = object()
+    storage_provider = _FakeS3StorageClient()
     runtime.bind(
         client=EasierlitClient(run_func=lambda _app: None),
         app=EasierlitApp(),
@@ -211,6 +241,27 @@ def test_default_sqlite_data_layer_uses_default_s3_storage_provider(tmp_path, mo
         def __init__(self, bucket: str, **kwargs):
             captured_s3["bucket"] = bucket
             captured_s3["kwargs"] = kwargs
+            self.client = object()
+
+        async def upload_file(
+            self,
+            object_key: str,
+            data,
+            mime: str = "application/octet-stream",
+            overwrite: bool = True,
+            content_disposition=None,
+        ):
+            del data, mime, overwrite, content_disposition
+            return {"object_key": object_key, "url": f"https://example.com/{object_key}"}
+
+        async def delete_file(self, _object_key: str) -> bool:
+            return True
+
+        async def get_read_url(self, object_key: str) -> str:
+            return f"https://example.com/{object_key}"
+
+        async def close(self) -> None:
+            return None
 
     class _FakeSQLAlchemyDataLayer:
         def __init__(self, conninfo: str, storage_provider=None):
@@ -281,6 +332,27 @@ def test_default_sqlite_data_layer_uses_fallback_s3_bucket_when_env_missing(
         def __init__(self, bucket: str, **kwargs):
             captured_s3["bucket"] = bucket
             captured_s3["kwargs"] = kwargs
+            self.client = object()
+
+        async def upload_file(
+            self,
+            object_key: str,
+            data,
+            mime: str = "application/octet-stream",
+            overwrite: bool = True,
+            content_disposition=None,
+        ):
+            del data, mime, overwrite, content_disposition
+            return {"object_key": object_key, "url": f"https://example.com/{object_key}"}
+
+        async def delete_file(self, _object_key: str) -> bool:
+            return True
+
+        async def get_read_url(self, object_key: str) -> str:
+            return f"https://example.com/{object_key}"
+
+        async def close(self) -> None:
+            return None
 
     class _FakeSQLAlchemyDataLayer:
         def __init__(self, conninfo: str, storage_provider=None):
@@ -325,7 +397,7 @@ def test_default_sqlite_data_layer_uses_fallback_s3_bucket_when_env_missing(
             os.environ["LITERAL_API_KEY"] = previous_literal_api_key
 
 
-def test_default_sqlite_data_layer_warns_when_storage_provider_missing(tmp_path, caplog):
+def test_default_sqlite_data_layer_rejects_missing_storage_provider(tmp_path):
     runtime = get_runtime()
     runtime.unbind()
     _clear_chainlit_hooks()
@@ -337,23 +409,14 @@ def test_default_sqlite_data_layer_warns_when_storage_provider_missing(tmp_path,
 
     chainlit_entry._CONFIG_APPLIED = False
 
-    db_path = tmp_path / "warning-provider.db"
-    runtime.bind(
-        client=EasierlitClient(run_func=lambda _app: None),
-        app=EasierlitApp(),
-        persistence=EasierlitPersistenceConfig(
-            enabled=True,
-            sqlite_path=str(db_path),
-            storage_provider=None,
-        ),
-    )
-
     try:
-        with caplog.at_level("WARNING", logger="easierlit.chainlit_entry"):
-            _apply_runtime_configuration()
-
-        assert "without a storage provider" in caplog.text
-        assert "storage_provider=..." in caplog.text
+        db_path = tmp_path / "warning-provider.db"
+        with pytest.raises(ValueError, match="must be an S3StorageClient"):
+            EasierlitPersistenceConfig(
+                enabled=True,
+                sqlite_path=str(db_path),
+                storage_provider=None,
+            )
     finally:
         runtime.unbind()
         _clear_chainlit_hooks()

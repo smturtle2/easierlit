@@ -87,7 +87,7 @@ EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # to
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
-EasierlitApp.get_history(thread_id) -> dict
+EasierlitApp.get_messages(thread_id) -> dict
 EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
@@ -147,11 +147,12 @@ server = EasierlitServer(client=client, auth=auth)
 
 ```python
 from easierlit import EasierlitPersistenceConfig, EasierlitServer
+from chainlit.data.storage_clients.s3 import S3StorageClient
 
 persistence = EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=None,  # 선택 override. `None`을 명시하면 파일/이미지 영속화를 비활성화합니다.
+    storage_provider=S3StorageClient(...),  # 선택 override. S3StorageClient만 허용됩니다.
 )
 
 server = EasierlitServer(client=client, persistence=persistence)
@@ -209,7 +210,7 @@ Thread History 표시 조건(Chainlit 정책):
 
 - `list_threads(first=20, cursor=None, search=None, user_identifier=None)`
 - `get_thread(thread_id)`
-- `get_history(thread_id) -> dict`
+- `get_messages(thread_id) -> dict`
 - `new_thread(name=None, metadata=None, tags=None) -> str`
 - `update_thread(thread_id, name=None, metadata=None, tags=None)`
 - `delete_thread(thread_id)`
@@ -219,7 +220,9 @@ Thread History 표시 조건(Chainlit 정책):
 - Thread CRUD는 data layer가 필요합니다.
 - `new_thread`는 고유한 thread id를 자동 생성하고 반환합니다.
 - `update_thread`는 대상 thread가 이미 있을 때만 수정합니다.
-- `get_history`은 thread 메타데이터와 `thread["steps"]` 순서 보존 `items` 단일 목록을 반환합니다.
+- `get_messages`는 thread 메타데이터와 순서 보존 `messages` 단일 목록을 반환합니다.
+- `get_messages`는 `user_message`/`assistant_message`/`system_message`/`tool` step 타입만 포함합니다.
+- `get_messages`는 `thread["elements"]`를 `forId` 기준으로 매핑해 각 message에 `elements`를 포함합니다.
 - auth 설정 시 `new_thread`/`update_thread` 모두 소유자 user를 자동 조회/생성 후 `user_id`로 저장합니다.
 - SQLite SQLAlchemyDataLayer에서는 `tags` list를 저장 시 JSON 직렬화하고 조회 시 list로 정규화합니다.
 

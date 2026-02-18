@@ -19,6 +19,7 @@ def _reset_state():
     previous_literal_api_key = os.environ.get("LITERAL_API_KEY")
 
     chainlit_entry._CONFIG_APPLIED = False
+    chainlit_entry._DEFAULT_DATA_LAYER_REGISTERED = False
     config.code.password_auth_callback = None
     config.code.data_layer = None
 
@@ -29,6 +30,7 @@ def _reset_state():
 
     runtime.unbind()
     chainlit_entry._CONFIG_APPLIED = False
+    chainlit_entry._DEFAULT_DATA_LAYER_REGISTERED = False
     config.code.password_auth_callback = None
     config.code.data_layer = None
 

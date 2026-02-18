@@ -205,7 +205,7 @@ def test_thread_crud_with_data_layer():
     assert fake.deleted_threads == ["thread-1"]
 
 
-def test_history_preserves_original_step_order():
+def test_get_messages_preserves_supported_order_and_maps_elements():
     class _FakeDataLayerWithSteps(FakeDataLayer):
         async def get_thread(self, thread_id: str):
             self.requested_threads.append(thread_id)
@@ -222,29 +222,78 @@ def test_history_preserves_original_step_order():
                     {"id": "run-1", "type": "run", "output": "done"},
                     "invalid-entry",
                 ],
+                "elements": [
+                    {
+                        "id": "el-1",
+                        "type": "image",
+                        "forId": "msg-1",
+                        "url": "https://example.com/a.png",
+                    },
+                    {
+                        "id": "el-2",
+                        "type": "image",
+                        "forId": "tool-1",
+                        "url": "https://example.com/tool.png",
+                    },
+                    {
+                        "id": "el-3",
+                        "type": "image",
+                        "forId": "run-1",
+                        "url": "https://example.com/run.png",
+                    },
+                    "invalid-element",
+                ],
             }
 
     fake = _FakeDataLayerWithSteps()
     app = EasierlitApp(data_layer_getter=lambda: fake)
-    history = app.get_history("thread-1")
+    messages_payload = app.get_messages("thread-1")
 
-    assert history["thread"]["id"] == "thread-1"
-    assert "steps" not in history["thread"]
-    assert [item["id"] for item in history["items"]] == [
+    assert messages_payload["thread"]["id"] == "thread-1"
+    assert "steps" not in messages_payload["thread"]
+    assert len(messages_payload["thread"]["elements"]) == 4
+    assert [item["id"] for item in messages_payload["messages"]] == [
         "msg-1",
         "msg-2",
         "tool-1",
-        "run-1",
     ]
+    assert [element["id"] for element in messages_payload["messages"][0]["elements"]] == ["el-1"]
+    assert messages_payload["messages"][1]["elements"] == []
+    assert [element["id"] for element in messages_payload["messages"][2]["elements"]] == ["el-2"]
 
 
-def test_history_handles_missing_steps_key():
+def test_get_messages_handles_missing_steps_key():
     fake = FakeDataLayer()
     app = EasierlitApp(data_layer_getter=lambda: fake)
-    history = app.get_history("thread-1")
+    messages_payload = app.get_messages("thread-1")
 
-    assert history["thread"]["id"] == "thread-1"
-    assert history["items"] == []
+    assert messages_payload["thread"]["id"] == "thread-1"
+    assert messages_payload["messages"] == []
+
+
+def test_get_messages_handles_missing_elements_key():
+    class _FakeDataLayerWithMessages(FakeDataLayer):
+        async def get_thread(self, thread_id: str):
+            self.requested_threads.append(thread_id)
+            if thread_id != "thread-1":
+                return None
+            return {
+                "id": thread_id,
+                "name": "Thread 1",
+                "steps": [
+                    {"id": "msg-1", "type": "assistant_message", "output": "hi"},
+                    {"id": "tool-1", "type": "tool", "output": "{}"},
+                    {"id": "run-1", "type": "run", "output": "done"},
+                ],
+            }
+
+    fake = _FakeDataLayerWithMessages()
+    app = EasierlitApp(data_layer_getter=lambda: fake)
+    messages_payload = app.get_messages("thread-1")
+
+    assert [item["id"] for item in messages_payload["messages"]] == ["msg-1", "tool-1"]
+    assert messages_payload["messages"][0]["elements"] == []
+    assert messages_payload["messages"][1]["elements"] == []
 
 
 def test_new_thread_creates_when_missing():

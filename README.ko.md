@@ -139,7 +139,7 @@ EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # to
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
-EasierlitApp.get_history(thread_id) -> dict
+EasierlitApp.get_messages(thread_id) -> dict
 EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
@@ -186,7 +186,7 @@ Easierlit에서 일반적인 구성:
 - `auth=None`, `persistence=None`으로 기본 인증/영속성 활성 사용
 - 기본 계정을 쓰지 않으려면 `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 설정
 - 기본 S3 bucket 이름을 바꾸려면 `EASIERLIT_S3_BUCKET`(또는 `BUCKET_NAME`) 설정
-- 다른 저장소를 쓰려면 `persistence=EasierlitPersistenceConfig(storage_provider=...)` 전달
+- S3 백엔드를 바꾸려면 `persistence=EasierlitPersistenceConfig(storage_provider=S3StorageClient(...))` 전달
 - 또는 `auth=EasierlitAuthConfig(...)`를 명시 전달
 
 Discord 봇 구성:
@@ -214,7 +214,7 @@ Thread API:
 
 - `app.list_threads(...)`
 - `app.get_thread(thread_id)`
-- `app.get_history(thread_id)`
+- `app.get_messages(thread_id)`
 - `app.new_thread(...)`
 - `app.update_thread(...)`
 - `app.delete_thread(thread_id)`
@@ -224,7 +224,9 @@ Thread API:
 - `app.add_message(...)`는 생성된 `message_id`를 반환
 - `app.add_tool(...)`은 도구 호출 step을 생성하며 도구명은 step author/name으로 표시됩니다.
 - `app.add_thought(...)`는 동일한 도구 호출 경로를 사용하고 도구명은 `Reasoning`으로 고정됩니다.
-- `app.get_history(...)`은 thread 메타데이터와 순서 보존 `items` 단일 목록을 반환합니다.
+- `app.get_messages(...)`은 thread 메타데이터와 순서 보존 `messages` 단일 목록을 반환합니다.
+- `app.get_messages(...)`은 `user_message`/`assistant_message`/`system_message`/`tool`만 포함하고 run 계열 step은 제외합니다.
+- `app.get_messages(...)`은 `thread["elements"]`를 `forId` 기준으로 각 message에 매핑해 이미지/파일 element를 바로 제공합니다.
 - `app.new_thread(...)`는 고유한 `thread_id`를 자동 생성하고 반환
 - `app.update_thread(...)`는 기존 thread만 수정
 - auth 설정 시 `app.new_thread(...)`/`app.update_thread(...)` 모두 소유자를 자동 귀속

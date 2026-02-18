@@ -24,7 +24,11 @@ from easierlit.discord_bridge import EasierlitDiscordBridge
 from easierlit.errors import AppClosedError, RunFuncExecutionError
 from easierlit.models import IncomingMessage
 from easierlit.runtime import get_runtime
-from easierlit.settings import EasierlitPersistenceConfig
+from easierlit.settings import (
+    EasierlitPersistenceConfig,
+    assert_s3_storage_operational,
+    ensure_s3_storage_provider,
+)
 from easierlit.sqlite_bootstrap import ensure_sqlite_schema
 
 LOGGER = logging.getLogger(__name__)
@@ -33,6 +37,7 @@ _CONFIG_APPLIED = False
 _APP_CLOSED_WARNING_EMITTED = False
 _WORKER_FAILURE_UI_NOTIFIED = False
 _DISCORD_BRIDGE: EasierlitDiscordBridge | None = None
+_DEFAULT_DATA_LAYER_REGISTERED = False
 
 
 def _summarize_worker_error(traceback_text: str) -> str:
@@ -122,23 +127,15 @@ def _should_register_default_data_layer() -> bool:
 
 
 def _register_default_data_layer_if_needed() -> None:
+    global _DEFAULT_DATA_LAYER_REGISTERED
     if not _should_register_default_data_layer():
+        _DEFAULT_DATA_LAYER_REGISTERED = False
         return
 
     persistence = RUNTIME.get_persistence() or EasierlitPersistenceConfig()
     db_path = ensure_sqlite_schema(persistence.sqlite_path).resolve()
     conninfo = f"sqlite+aiosqlite:///{db_path}"
-    storage_provider = persistence.storage_provider
-
-    if storage_provider is None:
-        LOGGER.warning(
-            "Easierlit default SQLite data layer is running without a storage provider. "
-            "File/image elements will not be persisted. If your app does not use file/image "
-            "elements, this warning can be ignored. Easierlit normally enables default "
-            "S3StorageClient automatically. To persist elements, remove explicit "
-            "storage_provider=None or pass "
-            "EasierlitPersistenceConfig(storage_provider=...)."
-        )
+    storage_provider = ensure_s3_storage_provider(persistence.storage_provider)
 
     @cl.data_layer
     def _easierlit_default_data_layer():
@@ -146,6 +143,7 @@ def _register_default_data_layer_if_needed() -> None:
 
         return SQLAlchemyDataLayer(conninfo=conninfo, storage_provider=storage_provider)
 
+    _DEFAULT_DATA_LAYER_REGISTERED = True
     LOGGER.info("Easierlit default SQLite data layer enabled at %s", db_path)
 
 
@@ -197,6 +195,11 @@ async def _on_app_startup() -> None:
         LOGGER.exception("Failed to initialize Chainlit data layer at startup.")
         data_layer = None
 
+    if _DEFAULT_DATA_LAYER_REGISTERED and data_layer is not None:
+        storage_provider = getattr(data_layer, "storage_provider", None)
+        ensure_s3_storage_provider(storage_provider)
+        await assert_s3_storage_operational(storage_provider)
+
     if not require_login():
         LOGGER.warning(
             "Thread History sidebar is hidden by Chainlit policy because "
@@ -212,6 +215,7 @@ async def _on_app_startup() -> None:
 @cl.on_app_shutdown
 async def _on_app_shutdown() -> None:
     global _APP_CLOSED_WARNING_EMITTED, _CONFIG_APPLIED, _WORKER_FAILURE_UI_NOTIFIED
+    global _DEFAULT_DATA_LAYER_REGISTERED
 
     await _stop_discord_bridge_if_running()
     await RUNTIME.stop_dispatcher()
@@ -230,6 +234,7 @@ async def _on_app_shutdown() -> None:
         _CONFIG_APPLIED = False
         _APP_CLOSED_WARNING_EMITTED = False
         _WORKER_FAILURE_UI_NOTIFIED = False
+        _DEFAULT_DATA_LAYER_REGISTERED = False
 
 
 @cl.on_chat_start

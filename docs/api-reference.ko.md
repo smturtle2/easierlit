@@ -31,7 +31,7 @@ EasierlitServer(
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD`가 모두 있으면 해당 값 사용
 - 둘 다 없으면 `admin` / `admin` 폴백 사용 (경고 로그 출력)
 - `persistence`: 선택 영속성 설정. `None`이면 기본 SQLite 부트스트랩 정책 활성
-- `persistence.storage_provider`: 파일/이미지 영속화를 위한 선택 Chainlit storage client override. 기본은 항상 `S3StorageClient` 자동 구성
+- `persistence.storage_provider`: 파일/이미지 영속화를 위한 선택 S3 storage client override. Easierlit은 `S3StorageClient`를 요구합니다.
 - `discord`: 선택 Discord 봇 설정 (기본은 비활성 정책)
 
 ### 2.2 `EasierlitServer.serve`
@@ -286,20 +286,21 @@ get_thread(thread_id: str) -> dict
 - SQLite `tags` 형식 정규화
 - 미존재 thread면 `ValueError`
 
-### 4.12 `EasierlitApp.get_history`
+### 4.12 `EasierlitApp.get_messages`
 
 ```python
-get_history(thread_id: str) -> dict
+get_messages(thread_id: str) -> dict
 ```
 
 동작:
 
 - `get_thread(thread_id)`로 대상 thread를 조회
 - `thread["steps"]` 원래 순서를 그대로 유지
-- dict 형태의 step 항목만 유지
+- dict 형태 step 중 `user_message`, `assistant_message`, `system_message`, `tool` 타입만 유지
+- `thread["elements"]`를 `forId` 기준으로 각 message에 매핑
 - 반환 형식:
 - `thread`: `steps`를 제외한 thread 메타데이터
-- `items`: 메시지/비메시지를 합친 순서 보존 단일 목록
+- `messages`: `elements`를 포함한 메시지/도구 step 순서 보존 단일 목록
 
 ### 4.13 `EasierlitApp.new_thread`
 
@@ -394,14 +395,15 @@ EasierlitAuthConfig(
 EasierlitPersistenceConfig(
     enabled: bool = True,
     sqlite_path: str = ".chainlit/easierlit.db",
-    storage_provider: BaseStorageClient | Any | None = <auto S3StorageClient>,
+    storage_provider: BaseStorageClient | Any = <auto S3StorageClient>,
 )
 ```
 
 - `storage_provider`는 `SQLAlchemyDataLayer(storage_provider=...)`로 전달됩니다.
 - 기본 `storage_provider`는 `S3StorageClient`입니다.
 - bucket 해석 순서: `EASIERLIT_S3_BUCKET`, `BUCKET_NAME`, 미설정 시 `easierlit-default`.
-- `storage_provider=None`을 명시하면 파일/이미지 element는 영속화되지 않습니다.
+- `enabled=True`에서는 유효한 `S3StorageClient`가 필수이며, `None` 또는 비-S3 provider는 설정 오류를 발생시킵니다.
+- Easierlit은 업로드 응답의 `object_key`/`url`을 엄격 검증해 이미지 영속성 누락을 즉시 표면화합니다.
 
 ### 5.3 `EasierlitDiscordConfig`
 
@@ -479,7 +481,7 @@ OutgoingCommand(
 | 메서드 그룹 | 예제 |
 |---|---|
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
-| `EasierlitApp.list_threads`, `get_thread`, `get_history`, `new_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
+| `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
 | 인증/영속성 설정 | `examples/custom_auth.py` |

@@ -31,7 +31,7 @@ Parameters:
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` when both are present.
 - fallback `admin` / `admin` when both are absent (warning log emitted).
 - `persistence`: optional persistence config. If `None`, default SQLite bootstrap behavior is enabled.
-- `persistence.storage_provider`: optional Chainlit storage client override for file/image persistence. By default, Easierlit always auto-builds `S3StorageClient`.
+- `persistence.storage_provider`: optional S3 storage client override for file/image persistence. Easierlit requires `S3StorageClient`.
 - `discord`: optional Discord bot config. Defaults to disabled behavior.
 
 ### 2.2 `EasierlitServer.serve`
@@ -286,20 +286,21 @@ get_thread(thread_id: str) -> dict
 - Normalizes SQLite tags format.
 - Raises `ValueError` if thread does not exist.
 
-### 4.12 `EasierlitApp.get_history`
+### 4.12 `EasierlitApp.get_messages`
 
 ```python
-get_history(thread_id: str) -> dict
+get_messages(thread_id: str) -> dict
 ```
 
 Behavior:
 
 - Loads the target thread via `get_thread(thread_id)`.
 - Preserves the original order of `thread["steps"]`.
-- Keeps only step entries that are dictionaries.
+- Keeps only dictionary steps with these types: `user_message`, `assistant_message`, `system_message`, `tool`.
+- Maps `thread["elements"]` to each message by `forId`.
 - Returns:
 - `thread`: thread metadata without `steps`
-- `items`: one ordered list containing both message and non-message steps
+- `messages`: one ordered list containing message/tool steps, each with `elements`
 
 ### 4.13 `EasierlitApp.new_thread`
 
@@ -394,14 +395,15 @@ EasierlitAuthConfig(
 EasierlitPersistenceConfig(
     enabled: bool = True,
     sqlite_path: str = ".chainlit/easierlit.db",
-    storage_provider: BaseStorageClient | Any | None = <auto S3StorageClient>,
+    storage_provider: BaseStorageClient | Any = <auto S3StorageClient>,
 )
 ```
 
 - `storage_provider` is forwarded to `SQLAlchemyDataLayer(storage_provider=...)`.
 - Default `storage_provider` is `S3StorageClient`.
 - Bucket resolution order: `EASIERLIT_S3_BUCKET`, `BUCKET_NAME`, then fallback `easierlit-default`.
-- If `storage_provider=None` is explicitly passed, file/image elements are not persisted.
+- `enabled=True` requires a valid `S3StorageClient`; `None` or non-S3 providers raise configuration errors.
+- Easierlit enforces strict upload responses (`object_key` and `url`) to prevent silent image persistence drops.
 
 ### 5.3 `EasierlitDiscordConfig`
 
@@ -479,7 +481,7 @@ OutgoingCommand(
 | Method group | Example |
 |---|---|
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
-| `EasierlitApp.list_threads`, `get_thread`, `get_history`, `new_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
+| `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
 | Auth + persistence configs | `examples/custom_auth.py` |
