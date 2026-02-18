@@ -128,7 +128,9 @@ Default behavior when omitted:
 - `persistence=None`: default SQLite persistence is enabled at `.chainlit/easierlit.db`.
 - Default file/image storage always uses `LocalFileStorageClient`.
 - Default local storage path is `<CHAINLIT_APP_ROOT or cwd>/public/easierlit`.
-- `LocalFileStorageClient(base_dir=...)` must resolve under `<CHAINLIT_APP_ROOT or cwd>/public`.
+- `LocalFileStorageClient(base_dir=...)` supports `~` expansion.
+- Relative `base_dir` values resolve under `<CHAINLIT_APP_ROOT or cwd>/public`.
+- Absolute `base_dir` values outside `public` are exposed via a symlink under `public/.easierlit-external/`.
 - Local file/image URLs automatically include `CHAINLIT_PARENT_ROOT_PATH` + `CHAINLIT_ROOT_PATH`.
 
 Auth setup example:

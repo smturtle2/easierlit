@@ -187,7 +187,9 @@ This includes parameter constraints, return semantics, exceptions, side effects,
 - Default persistence: SQLite at `.chainlit/easierlit.db` (threads + text steps)
 - Default file/image storage: `LocalFileStorageClient` is always enabled by default
 - Default local storage path: `<CHAINLIT_APP_ROOT or cwd>/public/easierlit`
-- `LocalFileStorageClient(base_dir=...)` must stay inside `<CHAINLIT_APP_ROOT or cwd>/public`
+- `LocalFileStorageClient(base_dir=...)` supports `~` expansion
+- Relative `base_dir` values resolve under `<CHAINLIT_APP_ROOT or cwd>/public`
+- Absolute `base_dir` values outside `public` are exposed via a symlink under `public/.easierlit-external/`
 - Local file/image URLs include both `CHAINLIT_PARENT_ROOT_PATH` and `CHAINLIT_ROOT_PATH` prefixes
 - If SQLite schema is incompatible, Easierlit recreates DB with backup
 - Sidebar default state is forced to `open`

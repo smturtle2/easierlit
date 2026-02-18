@@ -416,7 +416,9 @@ EasierlitPersistenceConfig(
 - `storage_provider` is forwarded to `SQLAlchemyDataLayer(storage_provider=...)`.
 - Default `storage_provider` is `LocalFileStorageClient`.
 - Default local storage path is `<CHAINLIT_APP_ROOT or cwd>/public/easierlit`.
-- `LocalFileStorageClient(base_dir=...)` must resolve under `<CHAINLIT_APP_ROOT or cwd>/public`; otherwise `ValueError` is raised.
+- `LocalFileStorageClient(base_dir=...)` supports `~` expansion.
+- Relative `base_dir` values resolve under `<CHAINLIT_APP_ROOT or cwd>/public`.
+- Absolute `base_dir` values outside `public` are exposed via a symlink under `public/.easierlit-external/`.
 - Generated local file/image URLs include both `CHAINLIT_PARENT_ROOT_PATH` and `CHAINLIT_ROOT_PATH`.
 - `enabled=True` requires a valid `LocalFileStorageClient`; `None` or non-local providers raise configuration errors.
 - Easierlit preflights local storage upload/read/delete at startup for default persistence.

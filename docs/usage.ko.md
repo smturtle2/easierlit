@@ -128,7 +128,9 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 - `persistence=None`: 기본 SQLite 영속성(`.chainlit/easierlit.db`)이 활성화됩니다.
 - 파일/이미지 저장소는 기본으로 항상 `LocalFileStorageClient`를 사용합니다.
 - 기본 로컬 저장 경로는 `<CHAINLIT_APP_ROOT 또는 cwd>/public/easierlit`입니다.
-- `LocalFileStorageClient(base_dir=...)`는 반드시 `<CHAINLIT_APP_ROOT 또는 cwd>/public` 하위로 해석되어야 합니다.
+- `LocalFileStorageClient(base_dir=...)`는 `~` 경로 확장을 지원합니다.
+- 상대 `base_dir`는 `<CHAINLIT_APP_ROOT 또는 cwd>/public` 하위로 해석됩니다.
+- `public` 밖 절대 `base_dir`는 `public/.easierlit-external/` 아래 심볼릭 링크로 노출됩니다.
 - 로컬 파일/이미지 URL은 `CHAINLIT_PARENT_ROOT_PATH` + `CHAINLIT_ROOT_PATH`를 자동 반영합니다.
 
 인증 설정 예시:

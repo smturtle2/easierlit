@@ -416,7 +416,9 @@ EasierlitPersistenceConfig(
 - `storage_provider`는 `SQLAlchemyDataLayer(storage_provider=...)`로 전달됩니다.
 - 기본 `storage_provider`는 `LocalFileStorageClient`입니다.
 - 기본 로컬 저장 경로는 `<CHAINLIT_APP_ROOT 또는 cwd>/public/easierlit`입니다.
-- `LocalFileStorageClient(base_dir=...)`는 반드시 `<CHAINLIT_APP_ROOT 또는 cwd>/public` 하위여야 하며, 아니면 `ValueError`를 발생시킵니다.
+- `LocalFileStorageClient(base_dir=...)`는 `~` 경로 확장을 지원합니다.
+- 상대 `base_dir`는 `<CHAINLIT_APP_ROOT 또는 cwd>/public` 하위로 해석됩니다.
+- `public` 밖 절대 `base_dir`는 `public/.easierlit-external/` 아래 심볼릭 링크로 노출됩니다.
 - 생성되는 로컬 파일/이미지 URL은 `CHAINLIT_PARENT_ROOT_PATH`와 `CHAINLIT_ROOT_PATH`를 함께 반영합니다.
 - `enabled=True`에서는 유효한 `LocalFileStorageClient`가 필수이며, `None` 또는 비-local provider는 설정 오류를 발생시킵니다.
 - 기본 persistence 경로에서는 startup에 local storage upload/read/delete preflight를 수행합니다.

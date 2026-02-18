@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -11,6 +12,8 @@ _APP_ROOT_ENV = "CHAINLIT_APP_ROOT"
 _PARENT_ROOT_PATH_ENV = "CHAINLIT_PARENT_ROOT_PATH"
 _ROOT_PATH_ENV = "CHAINLIT_ROOT_PATH"
 _DEFAULT_LOCAL_STORAGE_SUBDIR = Path("easierlit")
+_EXTERNAL_PUBLIC_MOUNT_SUBDIR = Path(".easierlit-external")
+_EXTERNAL_PUBLIC_MOUNT_PREFIX = "mount-"
 
 
 class LocalFileStorageClient(BaseStorageClient):
@@ -20,6 +23,7 @@ class LocalFileStorageClient(BaseStorageClient):
 
         self.base_dir = self._resolve_base_dir(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.public_mount_dir = self._resolve_public_mount_dir(self.base_dir)
 
     async def upload_file(
         self,
@@ -84,7 +88,7 @@ class LocalFileStorageClient(BaseStorageClient):
     def _resolve_public_root(self) -> Path:
         app_root_raw = os.getenv(_APP_ROOT_ENV, "").strip()
         if app_root_raw:
-            app_root = Path(app_root_raw)
+            app_root = Path(app_root_raw).expanduser()
             if not app_root.is_absolute():
                 app_root = Path.cwd() / app_root
         else:
@@ -95,24 +99,54 @@ class LocalFileStorageClient(BaseStorageClient):
         if base_dir is None:
             resolved_base = self.public_root / _DEFAULT_LOCAL_STORAGE_SUBDIR
         else:
-            candidate = Path(base_dir)
+            candidate = Path(base_dir).expanduser()
             if candidate.is_absolute():
                 resolved_base = candidate
             else:
                 resolved_base = self.public_root / candidate
 
-        resolved_base = resolved_base.resolve()
+        return resolved_base.resolve()
+
+    def _resolve_public_mount_dir(self, base_dir: Path) -> Path:
         try:
-            resolved_base.relative_to(self.public_root)
-        except ValueError as exc:
-            raise ValueError(
-                f"LocalFileStorageClient base_dir must be inside '{self.public_root}'."
+            base_dir.relative_to(self.public_root)
+        except ValueError:
+            return self._ensure_external_public_mount(base_dir)
+        return base_dir
+
+    def _ensure_external_public_mount(self, base_dir: Path) -> Path:
+        mount_root = (self.public_root / _EXTERNAL_PUBLIC_MOUNT_SUBDIR).resolve()
+        mount_root.mkdir(parents=True, exist_ok=True)
+
+        digest = hashlib.sha256(str(base_dir).encode("utf-8")).hexdigest()[:12]
+        mount_name = f"{_EXTERNAL_PUBLIC_MOUNT_PREFIX}{digest}"
+        mount_path = (mount_root / mount_name).resolve(strict=False)
+
+        if mount_path.is_symlink():
+            if mount_path.resolve() == base_dir:
+                return mount_path
+            mount_path.unlink()
+        elif mount_path.exists():
+            raise RuntimeError(
+                f"Cannot expose external storage path '{base_dir}' because "
+                f"'{mount_path}' already exists and is not a symlink."
+            )
+
+        try:
+            mount_path.symlink_to(base_dir, target_is_directory=True)
+        except OSError as exc:
+            raise RuntimeError(
+                "Failed to expose external local storage path via public symlink. "
+                "Provide a base_dir inside CHAINLIT_APP_ROOT/public, or enable symlink creation."
             ) from exc
 
-        return resolved_base
+        return mount_path
 
     def _public_relative_path(self, file_path: Path) -> str:
-        relative_path = file_path.relative_to(self.public_root)
+        relative_path = file_path.relative_to(self.base_dir)
+        relative_path = (
+            self.public_mount_dir.relative_to(self.public_root) / relative_path
+        )
         return relative_path.as_posix()
 
     def _build_public_url(self, public_relative_path: str) -> str:

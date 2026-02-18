@@ -44,10 +44,36 @@ def test_local_storage_rejects_traversal_object_key(tmp_path, monkeypatch):
         asyncio.run(provider.upload_file("../escape.txt", b"payload"))
 
 
-def test_local_storage_rejects_base_dir_outside_public_root(tmp_path, monkeypatch):
+def test_local_storage_allows_base_dir_outside_public_root_with_public_mount(tmp_path, monkeypatch):
     monkeypatch.setenv("CHAINLIT_APP_ROOT", str(tmp_path))
-    with pytest.raises(ValueError, match="must be inside"):
-        LocalFileStorageClient(base_dir=tmp_path / "outside")
+    outside_base = (tmp_path / "outside").resolve()
+    provider = LocalFileStorageClient(base_dir=outside_base)
+
+    uploaded = asyncio.run(provider.upload_file("user-1/image.png", b"payload"))
+
+    assert provider.base_dir == outside_base
+    assert (outside_base / "user-1" / "image.png").is_file()
+    assert uploaded["url"].startswith("/public/.easierlit-external/mount-")
+    assert uploaded["url"].endswith("/user-1/image.png")
+    public_mounts = list((tmp_path / "public" / ".easierlit-external").iterdir())
+    assert len(public_mounts) == 1
+    assert public_mounts[0].is_symlink()
+    assert public_mounts[0].resolve() == outside_base
+
+
+def test_local_storage_expands_tilde_base_dir(tmp_path, monkeypatch):
+    app_root = tmp_path / "app"
+    monkeypatch.setenv("CHAINLIT_APP_ROOT", str(app_root))
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    provider = LocalFileStorageClient(base_dir="~/easierlit-storage")
+    uploaded = asyncio.run(provider.upload_file("user-1/image.png", b"payload"))
+
+    expected_base = (tmp_path / "easierlit-storage").resolve()
+    assert provider.base_dir == expected_base
+    assert (expected_base / "user-1" / "image.png").is_file()
+    assert uploaded["url"].startswith("/public/.easierlit-external/mount-")
+    assert uploaded["url"].endswith("/user-1/image.png")
 
 
 def test_local_storage_default_base_dir_uses_chainlit_app_root(tmp_path, monkeypatch):
