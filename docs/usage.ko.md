@@ -8,7 +8,7 @@
 
 ## 1. 범위
 
-- 런타임 코어: Chainlit (`chainlit>=2.9,<3`)
+- 런타임 코어: Chainlit (`chainlit>=2.9.6,<3`)
 - 현재 공개 API 기준만 다룹니다.
 
 ## 2. 아키텍처
@@ -97,7 +97,7 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=<auto S3StorageClient>,
+    storage_provider=<auto LocalFileStorageClient>,
 )
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
@@ -110,8 +110,9 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 - sidebar 기본 상태 `open`
 - CoT 모드 `full` 강제
 - `CHAINLIT_AUTH_COOKIE_NAME`가 이미 있으면 유지, 없으면 `easierlit_access_token_<hash>`를 설정
-- `CHAINLIT_AUTH_SECRET`가 이미 있으면 유지, 없으면 `.chainlit/jwt.secret`를 자동 관리
+- `CHAINLIT_AUTH_SECRET`가 32바이트 미만이면 해당 실행에서 안전한 시크릿으로 자동 대체하고, 미설정이면 `.chainlit/jwt.secret`를 자동 관리
 - 종료 시 Easierlit이 `CHAINLIT_AUTH_COOKIE_NAME`/`CHAINLIT_AUTH_SECRET`를 이전 값으로 복원
+- `UVICORN_WS_PROTOCOL`이 비어 있으면 `websockets-sansio`를 기본값으로 사용
 - `run_func` fail-fast: 워커 예외 시 서버 종료 트리거
 - `serve()` 실행 중 Discord 연동은 기본 비활성(`DISCORD_BOT_TOKEN`이 이미 있어도 비활성)
 
@@ -125,8 +126,8 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 - 폴백 `admin` / `admin` (경고 로그 출력)
 - `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 중 하나만 설정하면 `ValueError`가 발생합니다.
 - `persistence=None`: 기본 SQLite 영속성(`.chainlit/easierlit.db`)이 활성화됩니다.
-- 파일/이미지 저장소는 기본으로 항상 `S3StorageClient`를 사용합니다.
-- bucket 해석 순서: `EASIERLIT_S3_BUCKET` -> `BUCKET_NAME` -> `easierlit-default`.
+- 파일/이미지 저장소는 기본으로 항상 `LocalFileStorageClient`를 사용합니다.
+- 기본 로컬 저장 경로는 `public/easierlit`입니다.
 
 인증 설정 예시:
 
@@ -146,13 +147,12 @@ server = EasierlitServer(client=client, auth=auth)
 영속성 설정 예시:
 
 ```python
-from easierlit import EasierlitPersistenceConfig, EasierlitServer
-from chainlit.data.storage_clients.s3 import S3StorageClient
+from easierlit import EasierlitPersistenceConfig, EasierlitServer, LocalFileStorageClient
 
 persistence = EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=S3StorageClient(...),  # 선택 override. S3StorageClient만 허용됩니다.
+    storage_provider=LocalFileStorageClient(...),  # 선택 override. LocalFileStorageClient만 허용됩니다.
 )
 
 server = EasierlitServer(client=client, persistence=persistence)

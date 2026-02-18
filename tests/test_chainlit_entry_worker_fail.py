@@ -8,6 +8,7 @@ import easierlit.chainlit_entry as chainlit_entry
 from easierlit import EasierlitApp, EasierlitClient
 from easierlit.errors import AppClosedError, RunFuncExecutionError
 from easierlit.runtime import get_runtime
+from easierlit.storage import LocalFileStorageClient
 
 
 class _FakeUIMessage:
@@ -239,3 +240,53 @@ def test_start_and_stop_discord_bridge_lifecycle():
 
         asyncio.run(chainlit_entry._stop_discord_bridge_if_running())
         assert stopped["count"] == 1
+
+
+def test_on_app_startup_runs_local_storage_preflight_for_default_data_layer(
+    tmp_path, monkeypatch
+):
+    runtime = get_runtime()
+    runtime.unbind()
+    runtime.bind(
+        client=EasierlitClient(run_func=lambda _app: None, worker_mode="thread"),
+        app=EasierlitApp(),
+    )
+
+    provider = LocalFileStorageClient(base_dir=tmp_path / "public" / "easierlit")
+    fake_data_layer = SimpleNamespace(storage_provider=provider)
+    calls = {"ensure": 0, "preflight": 0}
+
+    monkeypatch.setattr(chainlit_entry, "_apply_runtime_configuration", lambda: None)
+    monkeypatch.setattr(chainlit_entry, "get_data_layer", lambda: fake_data_layer)
+    monkeypatch.setattr(chainlit_entry, "require_login", lambda: True)
+
+    async def _noop_async():
+        return None
+
+    monkeypatch.setattr(chainlit_entry.RUNTIME, "start_dispatcher", _noop_async)
+    monkeypatch.setattr(chainlit_entry, "_start_discord_bridge_if_needed", _noop_async)
+
+    def _fake_ensure_local_storage_provider(storage_provider):
+        calls["ensure"] += 1
+        return storage_provider
+
+    async def _fake_assert_local_storage_operational(storage_provider):
+        del storage_provider
+        calls["preflight"] += 1
+
+    monkeypatch.setattr(
+        chainlit_entry,
+        "ensure_local_storage_provider",
+        _fake_ensure_local_storage_provider,
+    )
+    monkeypatch.setattr(
+        chainlit_entry,
+        "assert_local_storage_operational",
+        _fake_assert_local_storage_operational,
+    )
+
+    chainlit_entry._DEFAULT_DATA_LAYER_REGISTERED = True
+    asyncio.run(chainlit_entry._on_app_startup())
+
+    assert calls["ensure"] == 1
+    assert calls["preflight"] == 1

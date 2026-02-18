@@ -12,6 +12,7 @@ from .errors import (
 from .models import IncomingMessage, OutgoingCommand
 from .server import EasierlitServer
 from .settings import EasierlitAuthConfig, EasierlitDiscordConfig, EasierlitPersistenceConfig
+from .storage import LocalFileStorageClient
 
 __all__ = [
     "AppClosedError",
@@ -24,6 +25,7 @@ __all__ = [
     "EasierlitPersistenceConfig",
     "EasierlitServer",
     "IncomingMessage",
+    "LocalFileStorageClient",
     "OutgoingCommand",
     "RunFuncExecutionError",
     "ThreadSessionNotActiveError",

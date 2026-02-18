@@ -26,8 +26,8 @@ from easierlit.models import IncomingMessage
 from easierlit.runtime import get_runtime
 from easierlit.settings import (
     EasierlitPersistenceConfig,
-    assert_s3_storage_operational,
-    ensure_s3_storage_provider,
+    assert_local_storage_operational,
+    ensure_local_storage_provider,
 )
 from easierlit.sqlite_bootstrap import ensure_sqlite_schema
 
@@ -135,7 +135,7 @@ def _register_default_data_layer_if_needed() -> None:
     persistence = RUNTIME.get_persistence() or EasierlitPersistenceConfig()
     db_path = ensure_sqlite_schema(persistence.sqlite_path).resolve()
     conninfo = f"sqlite+aiosqlite:///{db_path}"
-    storage_provider = ensure_s3_storage_provider(persistence.storage_provider)
+    storage_provider = ensure_local_storage_provider(persistence.storage_provider)
 
     @cl.data_layer
     def _easierlit_default_data_layer():
@@ -197,8 +197,8 @@ async def _on_app_startup() -> None:
 
     if _DEFAULT_DATA_LAYER_REGISTERED and data_layer is not None:
         storage_provider = getattr(data_layer, "storage_provider", None)
-        ensure_s3_storage_provider(storage_provider)
-        await assert_s3_storage_operational(storage_provider)
+        ensure_local_storage_provider(storage_provider)
+        await assert_local_storage_operational(storage_provider)
 
     if not require_login():
         LOGGER.warning(

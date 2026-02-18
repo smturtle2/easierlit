@@ -2,7 +2,7 @@
 
 # Easierlit
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-0ea5e9)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.13%2B-0ea5e9)](pyproject.toml)
 [![Chainlit](https://img.shields.io/badge/chainlit-2.9%20to%203-10b981)](https://docs.chainlit.io)
 
 Easierlit은 Chainlit 위에 얇게 올린 Python 중심 래퍼입니다.
@@ -149,7 +149,7 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=<auto S3StorageClient>,
+    storage_provider=<auto LocalFileStorageClient>,
 )
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
@@ -162,16 +162,17 @@ EasierlitDiscordConfig(enabled=True, bot_token=None)
 
 ## 인증/영속성 기본값
 
-- JWT secret: `CHAINLIT_AUTH_SECRET`가 없을 때 `.chainlit/jwt.secret` 자동관리
+- JWT secret: `CHAINLIT_AUTH_SECRET`가 32바이트 미만이면 해당 실행에서 안전한 시크릿으로 자동 대체하고, 미설정이면 `.chainlit/jwt.secret`를 자동 관리
 - 인증 cookie: `CHAINLIT_AUTH_COOKIE_NAME`가 있으면 그대로 사용, 없으면 범위 기반 기본값 `easierlit_access_token_<hash>` 사용
 - 종료 시 Easierlit이 `CHAINLIT_AUTH_COOKIE_NAME`/`CHAINLIT_AUTH_SECRET`를 이전 값으로 복원
+- `UVICORN_WS_PROTOCOL`이 비어 있으면 `websockets-sansio`를 기본값으로 사용
 - `auth=None`이면 기본 인증 자동 활성
 - `auth=None`일 때 인증 자격증명 해석 순서:
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` (둘 다 함께 설정 필요)
 - 폴백 `admin` / `admin` (경고 로그 출력)
 - 기본 persistence: `.chainlit/easierlit.db` (SQLite, thread/텍스트 step 저장)
-- 기본 파일/이미지 저장소: `S3StorageClient`가 항상 기본 활성화
-- 기본 S3 bucket: `EASIERLIT_S3_BUCKET` 또는 `BUCKET_NAME`, 미설정 시 `easierlit-default`
+- 기본 파일/이미지 저장소: `LocalFileStorageClient`가 항상 기본 활성화
+- 기본 로컬 저장 경로: `public/easierlit`
 - SQLite 스키마 불일치 시 백업 후 재생성
 - sidebar 기본 상태는 `open`으로 강제
 - `serve()` 실행 중 Discord 연동은 기본 비활성입니다(`DISCORD_BOT_TOKEN`이 기존에 있어도 비활성).
@@ -185,8 +186,7 @@ Easierlit에서 일반적인 구성:
 
 - `auth=None`, `persistence=None`으로 기본 인증/영속성 활성 사용
 - 기본 계정을 쓰지 않으려면 `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 설정
-- 기본 S3 bucket 이름을 바꾸려면 `EASIERLIT_S3_BUCKET`(또는 `BUCKET_NAME`) 설정
-- S3 백엔드를 바꾸려면 `persistence=EasierlitPersistenceConfig(storage_provider=S3StorageClient(...))` 전달
+- 로컬 저장소 경로/동작을 바꾸려면 `persistence=EasierlitPersistenceConfig(storage_provider=LocalFileStorageClient(...))` 전달
 - 또는 `auth=EasierlitAuthConfig(...)`를 명시 전달
 
 Discord 봇 구성:

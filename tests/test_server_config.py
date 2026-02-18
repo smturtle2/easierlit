@@ -62,6 +62,7 @@ def test_serve_forces_headless_and_sidebar():
         observed["secret"] = fake_env["CHAINLIT_AUTH_SECRET"]
         assert _is_scoped_cookie_name(fake_env["CHAINLIT_AUTH_COOKIE_NAME"])
         assert fake_env["CHAINLIT_AUTH_SECRET"] == generated_secret
+        assert fake_env["UVICORN_WS_PROTOCOL"] == "websockets-sansio"
 
     client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
     auth = EasierlitAuthConfig(
@@ -92,12 +93,13 @@ def test_serve_forces_headless_and_sidebar():
     assert len(observed["secret"].encode("utf-8")) >= 32
     assert "CHAINLIT_AUTH_COOKIE_NAME" not in fake_env
     assert "CHAINLIT_AUTH_SECRET" not in fake_env
+    assert "UVICORN_WS_PROTOCOL" not in fake_env
 
 
 def test_serve_keeps_existing_chainlit_auth_env_and_skips_secret_generation():
     fake_env = {
         "CHAINLIT_AUTH_COOKIE_NAME": "external_cookie",
-        "CHAINLIT_AUTH_SECRET": "external_secret",
+        "CHAINLIT_AUTH_SECRET": "external_secret_external_secret_1234",
     }
     provider_called = {"count": 0}
 
@@ -107,7 +109,7 @@ def test_serve_keeps_existing_chainlit_auth_env_and_skips_secret_generation():
 
     def fake_run_chainlit(_target: str):
         assert fake_env["CHAINLIT_AUTH_COOKIE_NAME"] == "external_cookie"
-        assert fake_env["CHAINLIT_AUTH_SECRET"] == "external_secret"
+        assert fake_env["CHAINLIT_AUTH_SECRET"] == "external_secret_external_secret_1234"
 
     client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
     server = EasierlitServer(
@@ -120,7 +122,30 @@ def test_serve_keeps_existing_chainlit_auth_env_and_skips_secret_generation():
 
     assert provider_called["count"] == 0
     assert fake_env["CHAINLIT_AUTH_COOKIE_NAME"] == "external_cookie"
-    assert fake_env["CHAINLIT_AUTH_SECRET"] == "external_secret"
+    assert fake_env["CHAINLIT_AUTH_SECRET"] == "external_secret_external_secret_1234"
+
+
+def test_serve_replaces_short_chainlit_auth_secret_and_restores_original():
+    fake_env = {
+        "CHAINLIT_AUTH_SECRET": "short-secret",
+    }
+    generated_secret = "g" * 64
+    observed = {"secret": None}
+
+    def fake_run_chainlit(_target: str):
+        observed["secret"] = fake_env["CHAINLIT_AUTH_SECRET"]
+
+    client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
+    server = EasierlitServer(
+        client=client,
+        run_chainlit_fn=fake_run_chainlit,
+        jwt_secret_provider=lambda: generated_secret,
+        environ=fake_env,
+    )
+    server.serve()
+
+    assert observed["secret"] == generated_secret
+    assert fake_env["CHAINLIT_AUTH_SECRET"] == "short-secret"
 
 
 def test_default_cookie_name_varies_by_host_port_root_path_scope():
@@ -183,6 +208,46 @@ def test_blank_chainlit_auth_env_values_are_treated_as_missing_and_restored():
     assert observed["secret"] == generated_secret
     assert fake_env["CHAINLIT_AUTH_COOKIE_NAME"] == ""
     assert fake_env["CHAINLIT_AUTH_SECRET"] == "   "
+
+
+def test_serve_sets_default_ws_protocol_when_missing_and_restores_after_shutdown():
+    fake_env: dict[str, str] = {}
+    observed = {"ws_protocol": None}
+
+    def fake_run_chainlit(_target: str):
+        observed["ws_protocol"] = fake_env["UVICORN_WS_PROTOCOL"]
+
+    client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
+    server = EasierlitServer(
+        client=client,
+        run_chainlit_fn=fake_run_chainlit,
+        jwt_secret_provider=lambda: "x" * 64,
+        environ=fake_env,
+    )
+    server.serve()
+
+    assert observed["ws_protocol"] == "websockets-sansio"
+    assert "UVICORN_WS_PROTOCOL" not in fake_env
+
+
+def test_serve_preserves_existing_ws_protocol_env_value():
+    fake_env = {"UVICORN_WS_PROTOCOL": "wsproto"}
+    observed = {"ws_protocol": None}
+
+    def fake_run_chainlit(_target: str):
+        observed["ws_protocol"] = fake_env["UVICORN_WS_PROTOCOL"]
+
+    client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
+    server = EasierlitServer(
+        client=client,
+        run_chainlit_fn=fake_run_chainlit,
+        jwt_secret_provider=lambda: "x" * 64,
+        environ=fake_env,
+    )
+    server.serve()
+
+    assert observed["ws_protocol"] == "wsproto"
+    assert fake_env["UVICORN_WS_PROTOCOL"] == "wsproto"
 
 
 def test_runtime_is_unbound_after_serve():

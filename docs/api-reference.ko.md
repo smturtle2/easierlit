@@ -2,7 +2,7 @@
 
 ## 1. 범위와 계약 표기
 
-- 런타임 코어: Chainlit (`chainlit>=2.9,<3`)
+- 런타임 코어: Chainlit (`chainlit>=2.9.6,<3`)
 - 본 문서는 현재 공개 API만 다룹니다.
 - `EasierlitClient`는 thread 워커만 지원합니다(`worker_mode="thread"`).
 - 워커 런타임의 주 API는 `EasierlitApp`이며, message/thread CRUD를 모두 제공합니다.
@@ -31,7 +31,7 @@ EasierlitServer(
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD`가 모두 있으면 해당 값 사용
 - 둘 다 없으면 `admin` / `admin` 폴백 사용 (경고 로그 출력)
 - `persistence`: 선택 영속성 설정. `None`이면 기본 SQLite 부트스트랩 정책 활성
-- `persistence.storage_provider`: 파일/이미지 영속화를 위한 선택 S3 storage client override. Easierlit은 `S3StorageClient`를 요구합니다.
+- `persistence.storage_provider`: 파일/이미지 영속화를 위한 선택 로컬 storage client override. Easierlit은 `LocalFileStorageClient`를 요구합니다.
 - `discord`: 선택 Discord 봇 설정 (기본은 비활성 정책)
 
 ### 2.2 `EasierlitServer.serve`
@@ -48,7 +48,8 @@ serve() -> None
 - sidebar 기본 상태를 `open`으로 강제
 - CoT 모드를 `full`로 강제
 - `CHAINLIT_AUTH_COOKIE_NAME`가 이미 있으면 유지, 없으면 결정적 범위 기반 cookie 이름 `easierlit_access_token_<hash>` 설정
-- `CHAINLIT_AUTH_SECRET`가 이미 있으면 유지, 없으면 `.chainlit/jwt.secret`에서 secret을 해석
+- `CHAINLIT_AUTH_SECRET`가 32바이트 미만이면 해당 실행에서 안전한 시크릿으로 자동 대체하고, 미설정이면 `.chainlit/jwt.secret`에서 secret을 해석
+- `UVICORN_WS_PROTOCOL`이 비어 있으면 `websockets-sansio`를 기본값으로 설정
 - Discord 토큰 해석 순서: `bot_token` 우선, 없으면 `DISCORD_BOT_TOKEN` 폴백
 - Chainlit Discord handler를 런타임 monkeypatch하지 않고 Easierlit 자체 Discord bridge를 사용
 - `serve()` 동안 Chainlit의 `DISCORD_BOT_TOKEN` startup 경로를 비활성으로 유지하고 종료 시 기존 env 값을 복원
@@ -395,15 +396,15 @@ EasierlitAuthConfig(
 EasierlitPersistenceConfig(
     enabled: bool = True,
     sqlite_path: str = ".chainlit/easierlit.db",
-    storage_provider: BaseStorageClient | Any = <auto S3StorageClient>,
+    storage_provider: BaseStorageClient | Any = <auto LocalFileStorageClient>,
 )
 ```
 
 - `storage_provider`는 `SQLAlchemyDataLayer(storage_provider=...)`로 전달됩니다.
-- 기본 `storage_provider`는 `S3StorageClient`입니다.
-- bucket 해석 순서: `EASIERLIT_S3_BUCKET`, `BUCKET_NAME`, 미설정 시 `easierlit-default`.
-- `enabled=True`에서는 유효한 `S3StorageClient`가 필수이며, `None` 또는 비-S3 provider는 설정 오류를 발생시킵니다.
-- Easierlit은 업로드 응답의 `object_key`/`url`을 엄격 검증해 이미지 영속성 누락을 즉시 표면화합니다.
+- 기본 `storage_provider`는 `LocalFileStorageClient`입니다.
+- 기본 로컬 저장 경로는 `public/easierlit`입니다.
+- `enabled=True`에서는 유효한 `LocalFileStorageClient`가 필수이며, `None` 또는 비-local provider는 설정 오류를 발생시킵니다.
+- 기본 persistence 경로에서는 startup에 local storage upload/read/delete preflight를 수행합니다.
 
 ### 5.3 `EasierlitDiscordConfig`
 

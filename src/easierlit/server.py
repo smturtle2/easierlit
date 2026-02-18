@@ -21,6 +21,8 @@ _AUTH_USERNAME_ENV = "EASIERLIT_AUTH_USERNAME"
 _AUTH_PASSWORD_ENV = "EASIERLIT_AUTH_PASSWORD"
 _CHAINLIT_AUTH_COOKIE_NAME_ENV = "CHAINLIT_AUTH_COOKIE_NAME"
 _CHAINLIT_AUTH_SECRET_ENV = "CHAINLIT_AUTH_SECRET"
+_UVICORN_WS_PROTOCOL_ENV = "UVICORN_WS_PROTOCOL"
+_MIN_CHAINLIT_AUTH_SECRET_BYTES = 32
 
 
 class EasierlitServer:
@@ -63,6 +65,7 @@ class EasierlitServer:
         previous_discord_token = self._environ.get("DISCORD_BOT_TOKEN")
         previous_auth_cookie_name = self._environ.get(_CHAINLIT_AUTH_COOKIE_NAME_ENV)
         previous_auth_secret = self._environ.get(_CHAINLIT_AUTH_SECRET_ENV)
+        previous_ws_protocol = self._environ.get(_UVICORN_WS_PROTOCOL_ENV)
         resolved_discord_token = self._resolve_discord_token(previous_discord_token)
 
         runtime.bind(
@@ -113,6 +116,9 @@ class EasierlitServer:
             self._environ[_CHAINLIT_AUTH_SECRET_ENV] = self._resolve_chainlit_auth_secret(
                 previous_auth_secret
             )
+            self._environ[_UVICORN_WS_PROTOCOL_ENV] = self._resolve_uvicorn_ws_protocol(
+                previous_ws_protocol
+            )
 
             # Easierlit policy: always run headless, always keep sidebar open, and show full CoT.
             config.run.headless = True
@@ -125,6 +131,7 @@ class EasierlitServer:
             self._restore_env_var("DISCORD_BOT_TOKEN", previous_discord_token)
             self._restore_env_var(_CHAINLIT_AUTH_COOKIE_NAME_ENV, previous_auth_cookie_name)
             self._restore_env_var(_CHAINLIT_AUTH_SECRET_ENV, previous_auth_secret)
+            self._restore_env_var(_UVICORN_WS_PROTOCOL_ENV, previous_ws_protocol)
 
             self.client.set_worker_crash_handler(None)
             self.client.stop()
@@ -156,8 +163,19 @@ class EasierlitServer:
 
     def _resolve_chainlit_auth_secret(self, current_value: str | None) -> str:
         if current_value is not None and current_value.strip():
-            return current_value
+            if len(current_value.encode("utf-8")) >= _MIN_CHAINLIT_AUTH_SECRET_BYTES:
+                return current_value
+            LOGGER.warning(
+                "CHAINLIT_AUTH_SECRET is shorter than %d bytes. "
+                "Generating a secure secret automatically for this run.",
+                _MIN_CHAINLIT_AUTH_SECRET_BYTES,
+            )
         return self._jwt_secret_provider()
+
+    def _resolve_uvicorn_ws_protocol(self, current_value: str | None) -> str:
+        if current_value is not None and current_value.strip():
+            return current_value
+        return "websockets-sansio"
 
     def _restore_env_var(self, key: str, previous_value: str | None) -> None:
         if previous_value is None:

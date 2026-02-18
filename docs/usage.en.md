@@ -8,7 +8,7 @@ For exact method-level contracts (signature, raises, failure modes), see:
 
 ## 1. Scope
 
-- Runtime core: Chainlit (`chainlit>=2.9,<3`)
+- Runtime core: Chainlit (`chainlit>=2.9.6,<3`)
 - This guide covers current public APIs only.
 
 ## 2. Architecture
@@ -97,7 +97,7 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=<auto S3StorageClient>,
+    storage_provider=<auto LocalFileStorageClient>,
 )
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
@@ -110,8 +110,9 @@ Easierlit server enforces these defaults:
 - Sidebar default state forced to `open`.
 - CoT mode forced to `full`.
 - `CHAINLIT_AUTH_COOKIE_NAME` is preserved if already set; otherwise Easierlit sets `easierlit_access_token_<hash>`.
-- `CHAINLIT_AUTH_SECRET` is preserved if already set; otherwise Easierlit auto-manages `.chainlit/jwt.secret`.
+- If `CHAINLIT_AUTH_SECRET` is set but shorter than 32 bytes, Easierlit replaces it with a secure generated secret for the current run; if missing, Easierlit auto-manages `.chainlit/jwt.secret`.
 - Easierlit restores previous `CHAINLIT_AUTH_COOKIE_NAME` and `CHAINLIT_AUTH_SECRET` after shutdown.
+- `UVICORN_WS_PROTOCOL` defaults to `websockets-sansio` when not set.
 - `run_func` fail-fast: worker exception triggers server shutdown.
 - Discord integration is disabled by default during `serve()`, even if `DISCORD_BOT_TOKEN` is already set.
 
@@ -125,8 +126,8 @@ Default behavior when omitted:
 - fallback `admin` / `admin` (warning log emitted).
 - setting only one of `EASIERLIT_AUTH_USERNAME` or `EASIERLIT_AUTH_PASSWORD` raises `ValueError`.
 - `persistence=None`: default SQLite persistence is enabled at `.chainlit/easierlit.db`.
-- Default file/image storage always uses `S3StorageClient`.
-- Bucket resolution order: `EASIERLIT_S3_BUCKET` -> `BUCKET_NAME` -> `easierlit-default`.
+- Default file/image storage always uses `LocalFileStorageClient`.
+- Default local storage path is `public/easierlit`.
 
 Auth setup example:
 
@@ -146,13 +147,12 @@ server = EasierlitServer(client=client, auth=auth)
 Persistence setup example:
 
 ```python
-from easierlit import EasierlitPersistenceConfig, EasierlitServer
-from chainlit.data.storage_clients.s3 import S3StorageClient
+from easierlit import EasierlitPersistenceConfig, EasierlitServer, LocalFileStorageClient
 
 persistence = EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=S3StorageClient(...),  # Optional override. Must be an S3StorageClient.
+    storage_provider=LocalFileStorageClient(...),  # Optional override. Must be a LocalFileStorageClient.
 )
 
 server = EasierlitServer(client=client, persistence=persistence)

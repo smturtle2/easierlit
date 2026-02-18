@@ -2,7 +2,7 @@
 
 ## 1. Scope and Contract Notes
 
-- Runtime core: Chainlit (`chainlit>=2.9,<3`)
+- Runtime core: Chainlit (`chainlit>=2.9.6,<3`)
 - This document describes public APIs that are currently supported.
 - `EasierlitClient` is thread-worker only (`worker_mode="thread"`).
 - `EasierlitApp` is the primary runtime API for message and thread CRUD.
@@ -31,7 +31,7 @@ Parameters:
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` when both are present.
 - fallback `admin` / `admin` when both are absent (warning log emitted).
 - `persistence`: optional persistence config. If `None`, default SQLite bootstrap behavior is enabled.
-- `persistence.storage_provider`: optional S3 storage client override for file/image persistence. Easierlit requires `S3StorageClient`.
+- `persistence.storage_provider`: optional local storage client override for file/image persistence. Easierlit requires `LocalFileStorageClient`.
 - `discord`: optional Discord bot config. Defaults to disabled behavior.
 
 ### 2.2 `EasierlitServer.serve`
@@ -48,7 +48,8 @@ Behavior:
 - Forces sidebar default state to `open`.
 - Forces CoT mode to `full`.
 - Preserves `CHAINLIT_AUTH_COOKIE_NAME` when already set; otherwise sets deterministic scoped cookie name `easierlit_access_token_<hash>`.
-- Preserves `CHAINLIT_AUTH_SECRET` when already set; otherwise resolves secret from `.chainlit/jwt.secret`.
+- If `CHAINLIT_AUTH_SECRET` is set but shorter than 32 bytes, replaces it with a secure generated secret for the current run; if missing, resolves secret from `.chainlit/jwt.secret`.
+- Sets `UVICORN_WS_PROTOCOL=websockets-sansio` when not already configured.
 - Resolves Discord token as `bot_token` first, then `DISCORD_BOT_TOKEN` fallback.
 - Runs Discord through Easierlit's own bridge (no runtime monkeypatching of Chainlit Discord handlers).
 - Keeps Chainlit's `DISCORD_BOT_TOKEN` startup path disabled during `serve()` and restores the previous env value on shutdown.
@@ -395,15 +396,15 @@ EasierlitAuthConfig(
 EasierlitPersistenceConfig(
     enabled: bool = True,
     sqlite_path: str = ".chainlit/easierlit.db",
-    storage_provider: BaseStorageClient | Any = <auto S3StorageClient>,
+    storage_provider: BaseStorageClient | Any = <auto LocalFileStorageClient>,
 )
 ```
 
 - `storage_provider` is forwarded to `SQLAlchemyDataLayer(storage_provider=...)`.
-- Default `storage_provider` is `S3StorageClient`.
-- Bucket resolution order: `EASIERLIT_S3_BUCKET`, `BUCKET_NAME`, then fallback `easierlit-default`.
-- `enabled=True` requires a valid `S3StorageClient`; `None` or non-S3 providers raise configuration errors.
-- Easierlit enforces strict upload responses (`object_key` and `url`) to prevent silent image persistence drops.
+- Default `storage_provider` is `LocalFileStorageClient`.
+- Default local storage path is `public/easierlit`.
+- `enabled=True` requires a valid `LocalFileStorageClient`; `None` or non-local providers raise configuration errors.
+- Easierlit preflights local storage upload/read/delete at startup for default persistence.
 
 ### 5.3 `EasierlitDiscordConfig`
 

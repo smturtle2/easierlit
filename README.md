@@ -2,7 +2,7 @@
 
 # Easierlit
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-0ea5e9)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.13%2B-0ea5e9)](pyproject.toml)
 [![Chainlit](https://img.shields.io/badge/chainlit-2.9%20to%203-10b981)](https://docs.chainlit.io)
 
 Easierlit is a Python-first wrapper around Chainlit.
@@ -149,7 +149,7 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=<auto S3StorageClient>,
+    storage_provider=<auto LocalFileStorageClient>,
 )
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
@@ -162,16 +162,17 @@ This includes parameter constraints, return semantics, exceptions, side effects,
 
 ## Auth and Persistence Defaults
 
-- JWT secret: auto-managed at `.chainlit/jwt.secret` when `CHAINLIT_AUTH_SECRET` is not set
+- JWT secret: if `CHAINLIT_AUTH_SECRET` is set but shorter than 32 bytes, Easierlit replaces it with a secure generated secret for the current run; if missing, it auto-manages `.chainlit/jwt.secret`
 - Auth cookie: keeps `CHAINLIT_AUTH_COOKIE_NAME` when set, otherwise uses scoped default `easierlit_access_token_<hash>`
 - On shutdown, Easierlit restores the previous `CHAINLIT_AUTH_COOKIE_NAME` and `CHAINLIT_AUTH_SECRET`
+- `UVICORN_WS_PROTOCOL` defaults to `websockets-sansio` when not set
 - Default auth is enabled when `auth=None`
 - Auth credential order for `auth=None`:
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` (must be set together)
 - fallback to `admin` / `admin` (warning log emitted)
 - Default persistence: SQLite at `.chainlit/easierlit.db` (threads + text steps)
-- Default file/image storage: `S3StorageClient` is always enabled by default
-- Default S3 bucket: `EASIERLIT_S3_BUCKET` or `BUCKET_NAME`, fallback `easierlit-default`
+- Default file/image storage: `LocalFileStorageClient` is always enabled by default
+- Default local storage path: `public/easierlit`
 - If SQLite schema is incompatible, Easierlit recreates DB with backup
 - Sidebar default state is forced to `open`
 - Discord integration is disabled by default during `serve()`, even if `DISCORD_BOT_TOKEN` already exists.
@@ -185,8 +186,7 @@ Typical Easierlit setup:
 
 - keep `auth=None` and `persistence=None` for default enabled auth + persistence
 - optionally set `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` for non-default credentials
-- set `EASIERLIT_S3_BUCKET` (or `BUCKET_NAME`) to override the default S3 bucket name
-- pass `persistence=EasierlitPersistenceConfig(storage_provider=S3StorageClient(...))` to override S3 backend
+- pass `persistence=EasierlitPersistenceConfig(storage_provider=LocalFileStorageClient(...))` to override local storage path/behavior
 - or pass explicit `auth=EasierlitAuthConfig(...)`
 
 Discord bot setup:
