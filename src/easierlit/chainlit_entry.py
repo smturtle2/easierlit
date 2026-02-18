@@ -108,17 +108,7 @@ def _register_local_storage_route_if_needed() -> None:
 
     @chainlit_app.get(route_path)
     async def _easierlit_local_storage_file(object_key: str):
-        persistence = RUNTIME.get_persistence()
-        if persistence is None:
-            raise HTTPException(status_code=404, detail="Local storage is not configured.")
-
-        try:
-            storage_provider = ensure_local_storage_provider(persistence.storage_provider)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(
-                status_code=404,
-                detail="Local storage provider is unavailable.",
-            ) from exc
+        storage_provider = _resolve_local_storage_provider_for_read()
 
         try:
             file_path = storage_provider.resolve_file_path(object_key)
@@ -131,6 +121,34 @@ def _register_local_storage_route_if_needed() -> None:
         return FileResponse(path=str(file_path))
 
     _LOCAL_STORAGE_ROUTE_REGISTERED = True
+
+
+def _resolve_local_storage_provider_for_read():
+    try:
+        data_layer = get_data_layer()
+    except Exception:
+        data_layer = None
+
+    for attr in ("storage_provider", "storage_client"):
+        provider = getattr(data_layer, attr, None) if data_layer is not None else None
+        if provider is None:
+            continue
+        try:
+            return ensure_local_storage_provider(provider)
+        except (TypeError, ValueError):
+            continue
+
+    persistence = RUNTIME.get_persistence()
+    if persistence is None:
+        raise HTTPException(status_code=404, detail="Local storage is not configured.")
+
+    try:
+        return ensure_local_storage_provider(persistence.storage_provider)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Local storage provider is unavailable.",
+        ) from exc
 
 
 def _apply_auth_configuration() -> None:

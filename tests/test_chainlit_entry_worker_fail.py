@@ -321,3 +321,34 @@ def test_local_storage_route_serves_file_without_public_mount(tmp_path):
     assert uploaded["url"] == "/easierlit/local/user-1/image.png"
     assert response.status_code == 200
     assert response.content == b"payload"
+
+
+def test_local_storage_route_prefers_data_layer_storage_provider(tmp_path, monkeypatch):
+    runtime = get_runtime()
+    persistence_provider = LocalFileStorageClient(base_dir=tmp_path / "persistence-images")
+    persistence = EasierlitPersistenceConfig(
+        enabled=True,
+        sqlite_path=str(tmp_path / "route-test.db"),
+        storage_provider=persistence_provider,
+    )
+    runtime.bind(
+        client=EasierlitClient(run_func=lambda _app: None, worker_mode="thread"),
+        app=EasierlitApp(),
+        persistence=persistence,
+    )
+
+    data_layer_provider = LocalFileStorageClient(base_dir=tmp_path / "actual-images")
+    fake_data_layer = SimpleNamespace(storage_provider=data_layer_provider)
+    monkeypatch.setattr(chainlit_entry, "get_data_layer", lambda: fake_data_layer)
+
+    chainlit_entry._CONFIG_APPLIED = False
+    chainlit_entry._apply_runtime_configuration()
+
+    uploaded = asyncio.run(data_layer_provider.upload_file("user-1/image.png", b"payload"))
+    assert not (persistence_provider.base_dir / "user-1" / "image.png").exists()
+
+    with TestClient(chainlit_entry.chainlit_app) as client:
+        response = client.get(uploaded["url"])
+
+    assert response.status_code == 200
+    assert response.content == b"payload"
