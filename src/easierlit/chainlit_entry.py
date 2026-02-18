@@ -201,7 +201,26 @@ def _register_default_data_layer_if_needed() -> None:
     def _easierlit_default_data_layer():
         from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
 
-        return SQLAlchemyDataLayer(conninfo=conninfo, storage_provider=storage_provider)
+        class _EasierlitLocalSQLAlchemyDataLayer(SQLAlchemyDataLayer):
+            async def get_element(self, thread_id: str, element_id: str):
+                element = await super().get_element(thread_id, element_id)
+                if not isinstance(element, dict):
+                    return element
+
+                object_key = element.get("objectKey")
+                if not isinstance(object_key, str) or not object_key.strip():
+                    return element
+
+                try:
+                    element["url"] = await self.storage_provider.get_read_url(object_key)
+                except Exception:
+                    return element
+                return element
+
+        return _EasierlitLocalSQLAlchemyDataLayer(
+            conninfo=conninfo,
+            storage_provider=storage_provider,
+        )
 
     _DEFAULT_DATA_LAYER_REGISTERED = True
     LOGGER.info("Easierlit default SQLite data layer enabled at %s", db_path)

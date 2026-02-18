@@ -1,3 +1,4 @@
+import asyncio
 import os
 from pathlib import Path
 
@@ -242,6 +243,69 @@ def test_default_sqlite_data_layer_uses_default_provider_when_storage_dir_omitte
             sqlite_path=str(db_path),
         )
         assert isinstance(_resolve_local_storage_provider(persistence), LocalFileStorageClient)
+    finally:
+        runtime.unbind()
+        _clear_chainlit_hooks()
+        chainlit_entry._CONFIG_APPLIED = False
+
+        if previous_database_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous_database_url
+
+        if previous_literal_api_key is None:
+            os.environ.pop("LITERAL_API_KEY", None)
+        else:
+            os.environ["LITERAL_API_KEY"] = previous_literal_api_key
+
+
+def test_default_sqlite_data_layer_get_element_refreshes_url_from_object_key(tmp_path, monkeypatch):
+    runtime = get_runtime()
+    runtime.unbind()
+    _clear_chainlit_hooks()
+
+    previous_database_url = os.environ.get("DATABASE_URL")
+    previous_literal_api_key = os.environ.get("LITERAL_API_KEY")
+    os.environ.pop("DATABASE_URL", None)
+    os.environ.pop("LITERAL_API_KEY", None)
+
+    chainlit_entry._CONFIG_APPLIED = False
+
+    class _FakeSQLAlchemyDataLayer:
+        def __init__(self, conninfo: str, storage_provider=None):
+            self._conninfo = conninfo
+            self.storage_provider = storage_provider
+
+        async def get_element(self, thread_id: str, element_id: str):
+            return {
+                "id": element_id,
+                "threadId": thread_id,
+                "objectKey": "user-1/image.png",
+                "url": "/stale/url",
+            }
+
+    class _FakeStorageProvider:
+        async def get_read_url(self, object_key: str) -> str:
+            return f"/easierlit/local/{object_key}"
+
+    monkeypatch.setattr(chainlit_sql_alchemy, "SQLAlchemyDataLayer", _FakeSQLAlchemyDataLayer)
+
+    db_path = tmp_path / "refresh-element-url.db"
+    runtime.bind(
+        client=EasierlitClient(run_func=lambda _app: None),
+        app=EasierlitApp(),
+        persistence=EasierlitPersistenceConfig(enabled=True, sqlite_path=str(db_path)),
+    )
+
+    try:
+        _apply_runtime_configuration()
+        assert config.code.data_layer is not None
+
+        data_layer = config.code.data_layer()
+        data_layer.storage_provider = _FakeStorageProvider()
+        refreshed = asyncio.run(data_layer.get_element("thread-1", "element-1"))
+
+        assert refreshed["url"] == "/easierlit/local/user-1/image.png"
     finally:
         runtime.unbind()
         _clear_chainlit_hooks()
