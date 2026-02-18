@@ -26,7 +26,7 @@ def run_func(app: EasierlitApp):
 if __name__ == "__main__":
     # Auth is enabled by default on EasierlitServer(auth=None).
     # Login with configured credentials before using the Discord bridge.
-    client = EasierlitClient(run_func=run_func, worker_mode="thread")
+    client = EasierlitClient(run_funcs=[run_func], worker_mode="thread")
 
     # Option A: explicit config token (highest priority).
     discord = EasierlitDiscordConfig(bot_token="your-discord-bot-token")

@@ -16,7 +16,7 @@ For exact method-level contracts (signature, raises, failure modes), see:
 Easierlit has three core parts:
 
 - `EasierlitServer`: starts Chainlit in the main process.
-- `EasierlitClient`: starts your `run_func(app)` in one global thread worker.
+- `EasierlitClient`: starts your `run_funcs` in global thread workers (one thread per function).
 - `EasierlitApp`: queue bridge for inbound user messages and outbound commands.
 
 High-level flow:
@@ -48,7 +48,7 @@ def run_func(app):
         )
 
 
-client = EasierlitClient(run_func=run_func)
+client = EasierlitClient(run_funcs=[run_func])
 server = EasierlitServer(client=client)
 server.serve()
 ```
@@ -57,7 +57,8 @@ Notes:
 
 - `serve()` is blocking.
 - `worker_mode` supports only `"thread"`.
-- `run_func` can be sync or async. `run_func_mode="auto"` detects and runs both.
+- Each `run_func` in `run_funcs` can be sync or async.
+- `run_func_mode="auto"` detects sync/async behavior for each function.
 
 ## 4. Public API Signatures
 
@@ -74,10 +75,11 @@ EasierlitServer(
     discord=None,
 )
 
-EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
+EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
+EasierlitApp.enqueue(thread_id, content, session_id="external", author="External", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name is fixed to "Reasoning"
@@ -113,7 +115,7 @@ Easierlit server enforces these defaults:
 - If `CHAINLIT_AUTH_SECRET` is set but shorter than 32 bytes, Easierlit replaces it with a secure generated secret for the current run; if missing, Easierlit auto-manages `.chainlit/jwt.secret`.
 - Easierlit restores previous `CHAINLIT_AUTH_COOKIE_NAME` and `CHAINLIT_AUTH_SECRET` after shutdown.
 - `UVICORN_WS_PROTOCOL` defaults to `websockets-sansio` when not set.
-- `run_func` fail-fast: worker exception triggers server shutdown.
+- `run_func` fail-fast: any worker exception triggers server shutdown.
 - Discord integration is disabled by default during `serve()`, even if `DISCORD_BOT_TOKEN` is already set.
 
 ## 6. Auth, Persistence, and Discord
@@ -208,6 +210,11 @@ If `run_func` raises uncaught exception:
 - Easierlit logs traceback.
 - Easierlit triggers server shutdown.
 - Further incoming enqueue attempts are suppressed with shutdown messaging.
+
+External in-process input:
+
+- `app.enqueue(...)` lets you push non-Chainlit/non-Discord input into the same `app.recv()/app.arecv()` flow.
+- Typical usage is webhook/internal integration code that shares the same process.
 
 ## 8. Thread CRUD in App
 

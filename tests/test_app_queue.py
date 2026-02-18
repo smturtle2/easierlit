@@ -172,3 +172,63 @@ def test_arecv_timeout_and_close():
 
     with pytest.raises(AppClosedError):
         asyncio.run(app.arecv(timeout=0.05))
+
+
+def test_enqueue_default_values_and_recv_flow():
+    app = EasierlitApp()
+
+    message_id = app.enqueue(thread_id="thread-3", content="from external")
+    incoming = app.recv(timeout=1.0)
+
+    assert incoming.thread_id == "thread-3"
+    assert incoming.content == "from external"
+    assert incoming.session_id == "external"
+    assert incoming.author == "External"
+    assert incoming.message_id == message_id
+    assert isinstance(message_id, str)
+    assert message_id
+
+
+def test_enqueue_with_explicit_values_returns_same_message_id():
+    app = EasierlitApp()
+
+    message_id = app.enqueue(
+        thread_id="thread-4",
+        content="payload",
+        session_id="session-x",
+        author="Webhook",
+        message_id="msg-explicit",
+        metadata={"source": "integration"},
+        elements=[{"id": "el-1"}],
+        created_at="2026-02-18T10:00:00Z",
+    )
+    incoming = app.recv(timeout=1.0)
+
+    assert message_id == "msg-explicit"
+    assert incoming.message_id == "msg-explicit"
+    assert incoming.session_id == "session-x"
+    assert incoming.author == "Webhook"
+    assert incoming.metadata == {"source": "integration"}
+    assert incoming.elements == [{"id": "el-1"}]
+    assert incoming.created_at == "2026-02-18T10:00:00Z"
+
+
+def test_enqueue_rejects_blank_required_fields():
+    app = EasierlitApp()
+
+    with pytest.raises(ValueError, match="thread_id"):
+        app.enqueue(thread_id=" ", content="x")
+    with pytest.raises(ValueError, match="session_id"):
+        app.enqueue(thread_id="thread-1", content="x", session_id=" ")
+    with pytest.raises(ValueError, match="author"):
+        app.enqueue(thread_id="thread-1", content="x", author=" ")
+    with pytest.raises(ValueError, match="message_id"):
+        app.enqueue(thread_id="thread-1", content="x", message_id=" ")
+
+
+def test_enqueue_raises_app_closed_error_when_app_is_closed():
+    app = EasierlitApp()
+    app.close()
+
+    with pytest.raises(AppClosedError):
+        app.enqueue(thread_id="thread-1", content="x")

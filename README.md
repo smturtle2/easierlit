@@ -20,7 +20,7 @@ It keeps the power of Chainlit while reducing the boilerplate for worker loops, 
 
 - Clear runtime split:
 - `EasierlitServer`: runs Chainlit in the main process.
-- `EasierlitClient`: runs your `run_func(app)` in one global thread worker.
+- `EasierlitClient`: runs your `run_funcs` in global thread workers (one thread per function).
 - `EasierlitApp`: queue bridge for inbound/outbound communication.
 - Production-oriented defaults:
 - headless server mode
@@ -40,7 +40,7 @@ User UI
   -> Chainlit callbacks (on_message / on_chat_start / ...)
   -> Easierlit runtime bridge
   -> EasierlitApp incoming queue
-  -> run_func(app) in worker (thread)
+  -> run_funcs[i](app) in workers (thread)
   -> app.* APIs (message + thread CRUD)
   -> runtime dispatcher
   -> realtime session OR data-layer fallback
@@ -80,7 +80,7 @@ def run_func(app):
         )
 
 
-client = EasierlitClient(run_func=run_func)
+client = EasierlitClient(run_funcs=[run_func])
 server = EasierlitServer(client=client)
 server.serve()  # blocking
 ```
@@ -106,7 +106,7 @@ async def run_func(app):
 
 
 client = EasierlitClient(
-    run_func=run_func,
+    run_funcs=[run_func],
     run_func_mode="auto",  # auto/sync/async
 )
 server = EasierlitServer(client=client)
@@ -127,6 +127,17 @@ app.add_message(
 )
 ```
 
+External in-process enqueue example:
+
+```python
+message_id = app.enqueue(
+    thread_id="thread-external",
+    content="hello from external integration",
+    session_id="webhook-1",
+    author="Webhook",
+)
+```
+
 ## Public API
 
 ```python
@@ -140,10 +151,11 @@ EasierlitServer(
     discord=None,
 )
 
-EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
+EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
+EasierlitApp.enqueue(thread_id, content, session_id="external", author="External", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None, elements=None) -> str  # tool_name is fixed to "Reasoning"
@@ -257,7 +269,7 @@ Behavior highlights:
 
 Easierlit uses fail-fast behavior for worker crashes.
 
-- If `run_func` raises, server shutdown is triggered.
+- If any `run_func` raises, server shutdown is triggered.
 - UI gets a short summary when possible.
 - Full traceback is kept in server logs.
 

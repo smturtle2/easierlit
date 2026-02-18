@@ -105,6 +105,7 @@ class EasierlitServer:
         try:
             # Disable Chainlit built-in Discord bootstrapping. Easierlit runs its
             # own bridge through runtime.get_discord_token().
+            self._restore_env_var("DISCORD_BOT_TOKEN", None)
 
             self._environ["CHAINLIT_HOST"] = self.host
             self._environ["CHAINLIT_PORT"] = str(self.port)
@@ -177,6 +178,9 @@ class EasierlitServer:
         return "websockets-sansio"
 
     def _restore_env_var(self, key: str, previous_value: str | None) -> None:
+        if previous_value is None:
+            self._environ.pop(key, None)
+            return
         self._environ[key] = previous_value
 
     def _resolve_auth(self, auth: EasierlitAuthConfig | None) -> EasierlitAuthConfig:

@@ -20,7 +20,7 @@ Chainlit의 코어 기능은 유지하면서 워커 루프, 메시지 흐름, �
 
 - 런타임 역할 분리가 명확합니다.
 - `EasierlitServer`: 메인 프로세스에서 Chainlit 서버 실행
-- `EasierlitClient`: 단일 thread 워커에서 `run_func(app)` 실행
+- `EasierlitClient`: `run_funcs`를 전역 thread 워커들에서 실행(함수당 1개 스레드)
 - `EasierlitApp`: 입력/출력 큐 브리지
 - 운영 기본값이 실용적입니다.
 - headless 서버 실행
@@ -40,7 +40,7 @@ User UI
   -> Chainlit callbacks (on_message / on_chat_start / ...)
   -> Easierlit runtime bridge
   -> EasierlitApp incoming queue
-  -> worker의 run_func(app)
+  -> worker의 run_funcs[i](app)
   -> app.* APIs (message + thread CRUD)
   -> runtime dispatcher
   -> realtime session OR data-layer fallback
@@ -80,7 +80,7 @@ def run_func(app):
         )
 
 
-client = EasierlitClient(run_func=run_func)
+client = EasierlitClient(run_funcs=[run_func])
 server = EasierlitServer(client=client)
 server.serve()  # blocking
 ```
@@ -106,7 +106,7 @@ async def run_func(app):
 
 
 client = EasierlitClient(
-    run_func=run_func,
+    run_funcs=[run_func],
     run_func_mode="auto",  # auto/sync/async
 )
 server = EasierlitServer(client=client)
@@ -127,6 +127,17 @@ app.add_message(
 )
 ```
 
+외부(in-process) 입력 enqueue 예시:
+
+```python
+message_id = app.enqueue(
+    thread_id="thread-external",
+    content="hello from external integration",
+    session_id="webhook-1",
+    author="Webhook",
+)
+```
+
 ## 공개 API
 
 ```python
@@ -140,10 +151,11 @@ EasierlitServer(
     discord=None,
 )
 
-EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
+EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
+EasierlitApp.enqueue(thread_id, content, session_id="external", author="External", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None, elements=None) -> str  # tool_name은 "Reasoning" 고정
@@ -257,7 +269,7 @@ Thread API:
 
 Easierlit은 워커 크래시에 대해 fail-fast 정책을 사용합니다.
 
-- `run_func` 예외 발생 시 서버 종료 트리거
+- 어떤 `run_func`에서든 예외 발생 시 서버 종료 트리거
 - 가능하면 UI에 요약 메시지 표시
 - 전체 traceback은 서버 로그에 기록
 

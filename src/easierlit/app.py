@@ -71,6 +71,44 @@ class EasierlitApp:
     async def arecv(self, timeout: float | None = None) -> IncomingMessage:
         return await asyncio.to_thread(self.recv, timeout)
 
+    def enqueue(
+        self,
+        thread_id: str,
+        content: str,
+        *,
+        session_id: str = "external",
+        author: str = "External",
+        message_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        elements: list[Any] | None = None,
+        created_at: str | None = None,
+    ) -> str:
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            raise ValueError("thread_id must be a non-empty string.")
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("session_id must be a non-empty string.")
+        if not isinstance(author, str) or not author.strip():
+            raise ValueError("author must be a non-empty string.")
+
+        resolved_message_id = message_id
+        if resolved_message_id is None:
+            resolved_message_id = self._new_message_id()
+        elif not isinstance(resolved_message_id, str) or not resolved_message_id.strip():
+            raise ValueError("message_id must be a non-empty string when provided.")
+
+        incoming = IncomingMessage(
+            thread_id=thread_id,
+            session_id=session_id,
+            message_id=resolved_message_id,
+            content=content,
+            elements=elements or [],
+            author=author,
+            created_at=created_at,
+            metadata=metadata or {},
+        )
+        self._enqueue_incoming(incoming)
+        return resolved_message_id
+
     def add_message(
         self,
         thread_id: str,

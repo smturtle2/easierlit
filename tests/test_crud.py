@@ -544,7 +544,7 @@ def test_update_thread_auto_sets_owner_from_auth_existing_user():
     fake = FakeDataLayer(users={"admin": "user-admin"})
     runtime = RuntimeRegistry(data_layer_getter=lambda: fake)
     app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake)
-    client = EasierlitClient(run_func=lambda _app: None)
+    client = EasierlitClient(run_funcs=[lambda _app: None])
     runtime.bind(
         client=client,
         app=app,
@@ -567,7 +567,7 @@ def test_update_thread_auto_creates_owner_when_missing():
     fake = FakeDataLayer(users={})
     runtime = RuntimeRegistry(data_layer_getter=lambda: fake)
     app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake)
-    client = EasierlitClient(run_func=lambda _app: None)
+    client = EasierlitClient(run_funcs=[lambda _app: None])
     runtime.bind(
         client=client,
         app=app,

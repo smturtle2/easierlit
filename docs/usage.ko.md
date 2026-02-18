@@ -16,7 +16,7 @@
 Easierlit은 3개 구성 요소로 동작합니다.
 
 - `EasierlitServer`: 메인 프로세스에서 Chainlit 시작
-- `EasierlitClient`: 전역 thread 워커 1개에서 `run_func(app)` 실행
+- `EasierlitClient`: `run_funcs`를 전역 thread 워커들에서 실행(함수당 1개 스레드)
 - `EasierlitApp`: 사용자 입력과 출력 명령을 연결하는 큐 브리지
 
 상위 흐름:
@@ -48,7 +48,7 @@ def run_func(app):
         )
 
 
-client = EasierlitClient(run_func=run_func)
+client = EasierlitClient(run_funcs=[run_func])
 server = EasierlitServer(client=client)
 server.serve()
 ```
@@ -57,7 +57,8 @@ server.serve()
 
 - `serve()`는 블로킹입니다.
 - `worker_mode`는 `"thread"`만 지원합니다.
-- `run_func`는 sync/async 모두 지원하며 기본값 `run_func_mode="auto"`가 자동 판별합니다.
+- `run_funcs`의 각 `run_func`는 sync/async 모두 지원합니다.
+- 기본값 `run_func_mode="auto"`가 각 함수의 실행 타입을 자동 판별합니다.
 
 ## 4. 공개 API 시그니처
 
@@ -74,10 +75,11 @@ EasierlitServer(
     discord=None,
 )
 
-EasierlitClient(run_func, worker_mode="thread", run_func_mode="auto")
+EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
+EasierlitApp.enqueue(thread_id, content, session_id="external", author="External", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name은 "Reasoning" 고정
@@ -113,7 +115,7 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 - `CHAINLIT_AUTH_SECRET`가 32바이트 미만이면 해당 실행에서 안전한 시크릿으로 자동 대체하고, 미설정이면 `.chainlit/jwt.secret`를 자동 관리
 - 종료 시 Easierlit이 `CHAINLIT_AUTH_COOKIE_NAME`/`CHAINLIT_AUTH_SECRET`를 이전 값으로 복원
 - `UVICORN_WS_PROTOCOL`이 비어 있으면 `websockets-sansio`를 기본값으로 사용
-- `run_func` fail-fast: 워커 예외 시 서버 종료 트리거
+- `run_func` fail-fast: 어떤 워커에서든 예외 발생 시 서버 종료 트리거
 - `serve()` 실행 중 Discord 연동은 기본 비활성(`DISCORD_BOT_TOKEN`이 이미 있어도 비활성)
 
 ## 6. 인증, 영속성, Discord
@@ -208,6 +210,11 @@ Thread History 표시 조건(Chainlit 정책):
 - Easierlit가 traceback을 로그에 남김
 - 서버 종료를 트리거함
 - 종료 진행 중 입력 enqueue는 요약 메시지 방식으로 억제
+
+외부 in-process 입력:
+
+- `app.enqueue(...)`로 Chainlit/Discord 외 입력을 동일한 `app.recv()/app.arecv()` 흐름으로 주입할 수 있습니다.
+- 같은 프로세스에서 동작하는 webhook/내부 연동 코드에 적합합니다.
 
 ## 8. App에서 Thread CRUD
 

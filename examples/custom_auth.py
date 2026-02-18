@@ -25,7 +25,7 @@ def run_func(app: EasierlitApp):
 
 
 if __name__ == "__main__":
-    client = EasierlitClient(run_func=run_func, worker_mode="thread")
+    client = EasierlitClient(run_funcs=[run_func], worker_mode="thread")
     auth = EasierlitAuthConfig(
         username="admin",
         password="admin",

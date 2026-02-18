@@ -53,7 +53,7 @@ def test_auth_config_sets_password_callback():
     )
     runtime = get_runtime()
     runtime.bind(
-        client=EasierlitClient(run_func=lambda _app: None),
+        client=EasierlitClient(run_funcs=[lambda _app: None]),
         app=EasierlitApp(),
         auth=auth,
     )
@@ -78,7 +78,7 @@ def test_auth_config_uses_custom_identifier():
     )
     runtime = get_runtime()
     runtime.bind(
-        client=EasierlitClient(run_func=lambda _app: None),
+        client=EasierlitClient(run_funcs=[lambda _app: None]),
         app=EasierlitApp(),
         auth=auth,
     )

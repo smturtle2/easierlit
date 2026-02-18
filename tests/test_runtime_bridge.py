@@ -35,7 +35,7 @@ def test_dispatcher_consumes_outgoing_queue():
 
     runtime = _SpyRuntime()
     app = EasierlitApp(runtime=runtime)
-    client = EasierlitClient(lambda _app: None)
+    client = EasierlitClient(run_funcs=[lambda _app: None])
     runtime.bind(client=client, app=app)
 
     async def scenario():
@@ -56,7 +56,7 @@ def test_dispatcher_consumes_outgoing_queue():
 def test_apply_outgoing_command_sends_to_discord_channel():
     runtime = RuntimeRegistry()
     app = EasierlitApp(runtime=runtime)
-    client = EasierlitClient(lambda _app: None)
+    client = EasierlitClient(run_funcs=[lambda _app: None])
     runtime.bind(client=client, app=app)
     runtime.register_discord_channel(thread_id="thread-1", channel_id=123)
 
@@ -101,7 +101,7 @@ def test_apply_outgoing_command_discord_also_persists_when_data_layer_exists():
         init_http_context_fn=lambda **_kwargs: None,
     )
     app = EasierlitApp(runtime=runtime)
-    client = EasierlitClient(lambda _app: None)
+    client = EasierlitClient(run_funcs=[lambda _app: None])
     runtime.bind(client=client, app=app)
     runtime.register_discord_channel(thread_id="thread-1", channel_id=123)
 

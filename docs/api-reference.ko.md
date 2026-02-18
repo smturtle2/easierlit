@@ -70,7 +70,7 @@ serve() -> None
 
 ```python
 EasierlitClient(
-    run_func: Callable[[EasierlitApp], Any],
+    run_funcs: list[Callable[[EasierlitApp], Any]],
     worker_mode: Literal["thread"] = "thread",
     run_func_mode: Literal["auto", "sync", "async"] = "auto",
 )
@@ -78,7 +78,7 @@ EasierlitClient(
 
 파라미터:
 
-- `run_func`: 사용자 워커 엔트리 함수
+- `run_funcs`: 비어 있지 않은 사용자 워커 엔트리 함수 리스트
 - `worker_mode`: `"thread"`만 허용
 - `run_func_mode`:
 - `"auto"`: 반환값 기준으로 sync/async 자동 처리
@@ -87,7 +87,8 @@ EasierlitClient(
 
 예외:
 
-- `worker_mode`/`run_func_mode`가 유효하지 않으면 `ValueError`
+- `worker_mode`/`run_func_mode`가 유효하지 않거나 `run_funcs`가 비정상이면 `ValueError`
+- `run_funcs` 항목 중 callable이 아닌 값이 있으면 `TypeError`
 
 ### 3.2 `EasierlitClient.run`
 
@@ -97,9 +98,10 @@ run(app: EasierlitApp) -> None
 
 동작:
 
-- daemon thread 워커 1개 시작
-- 워커에서 `run_func(app)` 실행
-- 처리되지 않은 워커 예외 traceback 저장 후 app 종료
+- `run_func`마다 daemon thread 워커 1개씩 시작
+- 동일한 app 인스턴스로 각 `run_func(app)` 실행
+- 처리되지 않은 워커 예외 traceback 저장 후 app 종료(fail-fast)
+- 특정 `run_func`의 정상 종료는 다른 워커를 중지시키지 않음
 
 예외:
 
@@ -114,7 +116,7 @@ stop(timeout: float = 5.0) -> None
 동작:
 
 - app 종료
-- 워커 스레드 join (`timeout`)
+- 모든 워커 스레드 join (`timeout` 각각 적용)
 - 워커 실패가 있으면 `RunFuncExecutionError`로 재전파
 
 ### 3.4 `EasierlitClient.set_worker_crash_handler` (고급)
@@ -156,7 +158,31 @@ arecv(timeout: float | None = None) -> IncomingMessage
 - `recv`의 async 버전
 - timeout/close 동작은 동일
 
-### 4.3 `EasierlitApp.add_message`
+### 4.3 `EasierlitApp.enqueue`
+
+```python
+enqueue(
+    thread_id: str,
+    content: str,
+    session_id: str = "external",
+    author: str = "External",
+    message_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    elements: list[Any] | None = None,
+    created_at: str | None = None,
+) -> str
+```
+
+동작:
+
+- `IncomingMessage`를 생성해 app incoming queue에 적재
+- 적재된 `message_id` 반환
+- `message_id` 생략 시 UUID 기반 자동 생성
+- `thread_id`/`session_id`/`author`가 공백 문자열이면 `ValueError`
+- `message_id`를 명시했는데 공백 문자열이면 `ValueError`
+- app이 이미 닫혀 있으면 `AppClosedError`
+
+### 4.4 `EasierlitApp.add_message`
 
 ```python
 add_message(
@@ -175,7 +201,7 @@ add_message(
 - 생성된 `message_id` 반환
 - 실제 반영은 runtime dispatcher에서 수행
 
-### 4.4 `EasierlitApp.add_tool`
+### 4.5 `EasierlitApp.add_tool`
 
 ```python
 add_tool(
@@ -191,7 +217,7 @@ add_tool(
 - `tool_name`은 step `name`(UI author 표기)으로 저장
 - `elements`로 전달된 Chainlit element 객체를 runtime으로 전달
 
-### 4.5 `EasierlitApp.add_thought`
+### 4.6 `EasierlitApp.add_thought`
 
 ```python
 add_thought(
@@ -204,7 +230,7 @@ add_thought(
 
 - `tool_name="Reasoning"` 고정값으로 `add_tool(...)`을 호출하는 래퍼
 
-### 4.6 `EasierlitApp.update_message`
+### 4.7 `EasierlitApp.update_message`
 
 ```python
 update_message(
@@ -219,7 +245,7 @@ update_message(
 - `update_message` command를 큐에 적재
 - `elements`로 전달된 Chainlit element 객체를 runtime으로 전달
 
-### 4.7 `EasierlitApp.update_tool`
+### 4.8 `EasierlitApp.update_tool`
 
 ```python
 update_tool(
@@ -236,7 +262,7 @@ update_tool(
 - `tool_name`은 step `name`(UI author 표기)으로 저장
 - `elements`로 전달된 Chainlit element 객체를 runtime으로 전달
 
-### 4.8 `EasierlitApp.update_thought`
+### 4.9 `EasierlitApp.update_thought`
 
 ```python
 update_thought(
@@ -250,7 +276,7 @@ update_thought(
 
 - `tool_name="Reasoning"` 고정값으로 `update_tool(...)`을 호출하는 래퍼
 
-### 4.9 `EasierlitApp.delete_message`
+### 4.10 `EasierlitApp.delete_message`
 
 ```python
 delete_message(thread_id: str, message_id: str) -> None
@@ -265,7 +291,7 @@ delete_message(thread_id: str, message_id: str) -> None
 3. session이 없고 data layer가 있으면 HTTP context 초기화 후 persistence fallback 반영
 4. 둘 다 없으면 command 적용 시 `ThreadSessionNotActiveError`
 
-### 4.10 `EasierlitApp.list_threads`
+### 4.11 `EasierlitApp.list_threads`
 
 ```python
 list_threads(
@@ -287,7 +313,7 @@ list_threads(
 - data layer 미설정 시 `DataPersistenceNotEnabledError`
 - `user_identifier` 미존재 시 `ValueError`
 
-### 4.11 `EasierlitApp.get_thread`
+### 4.12 `EasierlitApp.get_thread`
 
 ```python
 get_thread(thread_id: str) -> dict
@@ -297,7 +323,7 @@ get_thread(thread_id: str) -> dict
 - SQLite `tags` 형식 정규화
 - 미존재 thread면 `ValueError`
 
-### 4.12 `EasierlitApp.get_messages`
+### 4.13 `EasierlitApp.get_messages`
 
 ```python
 get_messages(thread_id: str) -> dict
@@ -316,7 +342,7 @@ get_messages(thread_id: str) -> dict
 - `thread`: `steps`를 제외한 thread 메타데이터
 - `messages`: `elements`를 포함한 메시지/도구 step 순서 보존 단일 목록
 
-### 4.13 `EasierlitApp.new_thread`
+### 4.14 `EasierlitApp.new_thread`
 
 ```python
 new_thread(
@@ -338,7 +364,7 @@ new_thread(
 
 - 16회 재시도 후에도 고유 id를 확보하지 못하면 `RuntimeError`
 
-### 4.14 `EasierlitApp.update_thread`
+### 4.15 `EasierlitApp.update_thread`
 
 ```python
 update_thread(
@@ -359,7 +385,7 @@ update_thread(
 
 - thread가 없으면 `ValueError`
 
-### 4.15 `EasierlitApp.delete_thread`
+### 4.16 `EasierlitApp.delete_thread`
 
 ```python
 delete_thread(thread_id: str) -> None
@@ -367,7 +393,7 @@ delete_thread(thread_id: str) -> None
 
 - data layer를 통해 thread 삭제
 
-### 4.16 `EasierlitApp.close`
+### 4.17 `EasierlitApp.close`
 
 ```python
 close() -> None
@@ -379,7 +405,7 @@ close() -> None
 - 대기 중 `recv/arecv`를 해제
 - dispatcher 종료를 위한 `close` command 큐 적재
 
-### 4.17 `EasierlitApp.is_closed`
+### 4.18 `EasierlitApp.is_closed`
 
 ```python
 is_closed() -> bool
@@ -450,6 +476,7 @@ IncomingMessage(
     session_id: str,
     message_id: str,
     content: str,
+    elements: list[Any] = [],
     author: str,
     created_at: str | None = None,
     metadata: dict | None = None,
@@ -486,7 +513,7 @@ OutgoingCommand(
 | `DataPersistenceNotEnabledError` | data layer 없는 상태에서 thread CRUD 호출 | persistence/data layer 설정 |
 | `ThreadSessionNotActiveError` | session/data layer 모두 없는 상태에서 메시지 command 적용 | 활성 session 유지 또는 persistence 설정 |
 | `RuntimeError` | `new_thread()`가 재시도 후에도 고유 id 할당 실패 | id 생성/충돌 상황 점검 후 재시도 |
-| `ValueError` | 잘못된 worker mode/run_func mode, user/thread 미존재 | 입력/식별자 검증 |
+| `ValueError` | 잘못된 worker mode/run_func mode/run_funcs, user/thread 미존재, enqueue 입력값 오류 | 입력/식별자 검증 |
 
 ## 7. Chainlit Message vs Tool-call 매핑
 
@@ -501,6 +528,7 @@ OutgoingCommand(
 |---|---|
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
 | `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
+| `EasierlitApp.enqueue` | 외부 입력을 `app.recv()`로 주입하는 in-process 연동 |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
 | 인증/영속성 설정 | `examples/custom_auth.py` |

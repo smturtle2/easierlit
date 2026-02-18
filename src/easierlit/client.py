@@ -72,7 +72,7 @@ def _execute_run_func(
 class EasierlitClient:
     def __init__(
         self,
-        run_func: Callable[[EasierlitApp], Any],
+        run_funcs: list[Callable[[EasierlitApp], Any]],
         worker_mode: Literal["thread"] = "thread",
         run_func_mode: RunFuncMode = "auto",
     ):
@@ -80,14 +80,19 @@ class EasierlitClient:
             raise ValueError("worker_mode must be 'thread'.")
         if run_func_mode not in ("auto", "sync", "async"):
             raise ValueError("run_func_mode must be one of 'auto', 'sync', or 'async'.")
+        if not isinstance(run_funcs, list) or not run_funcs:
+            raise ValueError("run_funcs must be a non-empty list of callables.")
+        for run_func in run_funcs:
+            if not callable(run_func):
+                raise TypeError("Every run_funcs item must be callable.")
 
-        self.run_func = run_func
+        self.run_funcs = run_funcs
         self.worker_mode = worker_mode
         self.run_func_mode = run_func_mode
 
         self._app: EasierlitApp | None = None
 
-        self._thread: threading.Thread | None = None
+        self._threads: list[threading.Thread] = []
         self._thread_error_queue: queue.Queue[str] = queue.Queue()
 
         self._worker_error_traceback: str | None = None
@@ -100,40 +105,48 @@ class EasierlitClient:
 
         self._reset_worker_error_state()
         self._app = app
-        self._start_thread_worker(app)
+        self._start_thread_workers(app)
 
     def stop(self, timeout: float = 5.0) -> None:
         app = self._app
         if app is not None:
             app.close()
 
-        if self._thread is not None:
-            self._thread.join(timeout=timeout)
-            self._thread = None
+        if self._threads:
+            for thread in self._threads:
+                thread.join(timeout=timeout)
+            self._threads = []
 
         self._app = None
         self._raise_worker_error_if_any()
 
-    def _start_thread_worker(self, app: EasierlitApp) -> None:
-        self._thread = threading.Thread(
-            target=self._thread_worker_entry,
-            args=(app,),
-            daemon=True,
-        )
-        self._thread.start()
+    def _start_thread_workers(self, app: EasierlitApp) -> None:
+        self._threads = []
+        for run_func in self.run_funcs:
+            thread = threading.Thread(
+                target=self._thread_worker_entry,
+                args=(app, run_func),
+                daemon=True,
+            )
+            self._threads.append(thread)
+            thread.start()
 
-    def _thread_worker_entry(self, app: EasierlitApp) -> None:
+    def _thread_worker_entry(
+        self,
+        app: EasierlitApp,
+        run_func: Callable[[EasierlitApp], Any],
+    ) -> None:
         try:
-            _execute_run_func(self.run_func, app, self.run_func_mode)
+            _execute_run_func(run_func, app, self.run_func_mode)
         except Exception:
             traceback_text = traceback.format_exc()
             self._thread_error_queue.put(traceback_text)
             self._record_worker_error(traceback_text)
-        finally:
             app.close()
 
     def _is_worker_running(self) -> bool:
-        return self._thread is not None and self._thread.is_alive()
+        self._threads = [thread for thread in self._threads if thread.is_alive()]
+        return bool(self._threads)
 
     def _raise_worker_error_if_any(self) -> None:
         worker_error = self.peek_worker_error()
@@ -153,6 +166,8 @@ class EasierlitClient:
 
     def _record_worker_error(self, traceback_text: str) -> None:
         with self._worker_error_lock:
+            if self._worker_error_traceback is not None:
+                return
             self._worker_error_traceback = traceback_text
             handler = self._worker_crash_handler
 

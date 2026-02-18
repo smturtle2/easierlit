@@ -255,7 +255,7 @@ def test_owner_rebind_uses_runtime_auth_and_merges_metadata():
     fake_data_layer = _FakeDataLayer()
     runtime = RuntimeRegistry(data_layer_getter=lambda: fake_data_layer)
     app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake_data_layer)
-    client = EasierlitClient(run_func=lambda _app: None, worker_mode="thread")
+    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
     runtime.bind(
         client=client,
         app=app,
