@@ -581,6 +581,54 @@ def test_new_thread_creates_when_missing():
     assert fake.updated_threads[0]["tags"] == ["tag"]
 
 
+def test_new_thread_uses_provided_thread_id():
+    fake = FakeDataLayer()
+    app = EasierlitApp(
+        data_layer_getter=lambda: fake,
+        uuid_factory=lambda: "thread-should-not-be-used",
+    )
+
+    thread_id = app.new_thread(
+        thread_id="thread-provided",
+        name="Created",
+        metadata={"x": 1},
+        tags=["tag"],
+    )
+
+    assert thread_id == "thread-provided"
+    assert fake.updated_threads[0]["thread_id"] == "thread-provided"
+    assert fake.updated_threads[0]["name"] == "Created"
+    assert fake.updated_threads[0]["metadata"] == {"x": 1}
+    assert fake.updated_threads[0]["tags"] == ["tag"]
+    assert fake.requested_threads == ["thread-provided"]
+
+
+def test_new_thread_keeps_positional_name_compatibility():
+    fake = FakeDataLayer()
+    app = EasierlitApp(
+        data_layer_getter=lambda: fake,
+        uuid_factory=lambda: "thread-new",
+    )
+
+    thread_id = app.new_thread("Created by positional")
+
+    assert thread_id == "thread-new"
+    assert fake.updated_threads[0]["thread_id"] == "thread-new"
+    assert fake.updated_threads[0]["name"] == "Created by positional"
+
+
+def test_new_thread_with_provided_thread_id_raises_on_duplicate():
+    fake = FakeDataLayer()
+    fake._threads.add("thread-duplicate")
+    app = EasierlitApp(data_layer_getter=lambda: fake)
+
+    with pytest.raises(ValueError, match="already exists"):
+        app.new_thread(thread_id="thread-duplicate", name="Duplicate")
+
+    assert fake.requested_threads == ["thread-duplicate"]
+    assert fake.updated_threads == []
+
+
 def test_new_thread_retries_when_generated_id_exists():
     fake = FakeDataLayer()
     fake._threads.add("thread-collision")

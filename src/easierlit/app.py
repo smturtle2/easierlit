@@ -317,7 +317,18 @@ class EasierlitApp:
         name: str | None = None,
         metadata: dict | None = None,
         tags: list[str] | None = None,
+        thread_id: str | None = None,
     ) -> str:
+        if thread_id is not None:
+            self._write_thread(
+                thread_id=thread_id,
+                name=name,
+                metadata=metadata,
+                tags=tags,
+                require_existing=False,
+            )
+            return thread_id
+
         data_layer = self._get_data_layer_or_raise()
         prepared_tags = self._prepare_tags_for_update(tags, data_layer)
 
