@@ -384,6 +384,9 @@ async def _on_message(message: cl.Message) -> None:
     session = cl.context.session
     _register_non_discord_session_for_current_session()
     _register_discord_channel_for_current_session()
+    app = RUNTIME.get_app()
+    if app is not None and app.is_thread_task_running(session.thread_id):
+        return
 
     incoming = IncomingMessage(
         thread_id=session.thread_id,

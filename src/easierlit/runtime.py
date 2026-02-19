@@ -248,6 +248,28 @@ class RuntimeRegistry:
 
         return session
 
+    async def set_thread_task_state(self, thread_id: str, is_running: bool) -> bool:
+        session = self._resolve_session(thread_id)
+        if session is None:
+            return False
+
+        try:
+            from chainlit.context import context, init_ws_context
+
+            init_ws_context(session)
+            if is_running:
+                await context.emitter.task_start()
+            else:
+                await context.emitter.task_end()
+            return True
+        except Exception:
+            LOGGER.exception(
+                "Failed to update task state for thread '%s' (is_running=%s).",
+                thread_id,
+                is_running,
+            )
+            return False
+
     @staticmethod
     def _require_thread_id(command: OutgoingCommand) -> str:
         thread_id = command.thread_id

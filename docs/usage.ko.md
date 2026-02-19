@@ -79,6 +79,9 @@ EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
+EasierlitApp.start_thread_task(thread_id)
+EasierlitApp.end_thread_task(thread_id)
+EasierlitApp.is_thread_task_running(thread_id) -> bool
 EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
@@ -216,6 +219,20 @@ Thread History 표시 조건(Chainlit 정책):
 
 - `app.enqueue(...)`는 입력을 `user_message`로 UI/data layer에 반영하고 동시에 `app.recv()/app.arecv()` 흐름에도 주입합니다.
 - 같은 프로세스에서 동작하는 webhook/내부 연동 코드에 적합합니다.
+- `app.enqueue(...)` 경로는 thread 작업 상태의 영향을 받지 않습니다.
+
+Thread 작업 상태 API:
+
+- `start_thread_task(thread_id)`
+- `end_thread_task(thread_id)`
+- `is_thread_task_running(thread_id) -> bool`
+
+동작:
+
+- `start_thread_task(...)`는 특정 thread를 작업 중으로 표시하고 해당 thread 내부 입력 잠금을 활성화합니다.
+- `end_thread_task(...)`는 작업 중 상태를 해제하고 내부 입력 잠금을 해제합니다.
+- thread가 작업 중 상태인 동안 해당 thread의 `@cl.on_message` 웹 입력은 조용히 무시됩니다.
+- 공개 `lock/unlock` 메서드는 제공하지 않습니다.
 
 ## 8. App에서 Thread CRUD
 
@@ -235,6 +252,7 @@ Thread History 표시 조건(Chainlit 정책):
 - `new_thread`는 고유한 thread id를 자동 생성하고 반환합니다.
 - `update_thread`는 대상 thread가 이미 있을 때만 수정합니다.
 - `reset_thread`는 thread 메시지를 전부 삭제하고 동일한 thread id로 재생성하며, `name`만 복원하고 해당 thread의 pending incoming 메시지도 제거합니다.
+- `delete_thread`/`reset_thread`는 해당 thread 작업 상태를 자동 해제합니다.
 - `get_messages`는 thread 메타데이터와 순서 보존 `messages` 단일 목록을 반환합니다.
 - `get_messages`는 `user_message`/`assistant_message`/`system_message`/`tool` step 타입만 포함합니다.
 - `get_messages`는 `thread["elements"]`를 `forId` 별칭(`forId`, `for_id`, `stepId`, `step_id`) 기준으로 매핑해 각 message에 `elements`를 포함합니다.

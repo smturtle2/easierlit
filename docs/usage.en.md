@@ -79,6 +79,9 @@ EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
+EasierlitApp.start_thread_task(thread_id)
+EasierlitApp.end_thread_task(thread_id)
+EasierlitApp.is_thread_task_running(thread_id) -> bool
 EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
@@ -216,6 +219,20 @@ External in-process input:
 
 - `app.enqueue(...)` mirrors input as `user_message` for UI/data-layer visibility and also feeds `app.recv()/app.arecv()`.
 - Typical usage is webhook/internal integration code that shares the same process.
+- `app.enqueue(...)` is not blocked by thread task state.
+
+Thread task-state API:
+
+- `start_thread_task(thread_id)`
+- `end_thread_task(thread_id)`
+- `is_thread_task_running(thread_id) -> bool`
+
+Behavior:
+
+- `start_thread_task(...)` marks a thread as working and enables internal input lock for that thread.
+- `end_thread_task(...)` clears working state and releases internal input lock for that thread.
+- While a thread is in working state, web input from `@cl.on_message` for that thread is silently ignored.
+- Public `lock/unlock` methods are intentionally not exposed.
 
 ## 8. Thread CRUD in App
 
@@ -235,6 +252,7 @@ Behavior details:
 - `new_thread` auto-generates a unique thread id and returns it.
 - `update_thread` updates only when target thread already exists.
 - `reset_thread` deletes all thread messages, recreates the same thread id, restores only thread `name`, and clears pending incoming messages for that thread.
+- `delete_thread` and `reset_thread` automatically clear thread task state for that thread.
 - `get_messages` returns thread metadata and one ordered `messages` list.
 - `get_messages` keeps only `user_message`/`assistant_message`/`system_message`/`tool` step types.
 - `get_messages` maps `thread["elements"]` by `forId` aliases: `forId`, `for_id`, `stepId`, `step_id`.

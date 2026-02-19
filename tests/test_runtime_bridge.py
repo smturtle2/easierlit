@@ -1,4 +1,6 @@
 import asyncio
+import importlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -163,3 +165,37 @@ def test_apply_outgoing_command_respects_explicit_step_type():
     assert len(fake_data_layer.created_steps) == 1
     assert fake_data_layer.created_steps[0]["type"] == "user_message"
     assert fake_data_layer.created_steps[0]["name"] == "Webhook"
+
+
+def test_set_thread_task_state_returns_false_without_session():
+    runtime = RuntimeRegistry()
+
+    assert asyncio.run(runtime.set_thread_task_state("thread-1", True)) is False
+    assert asyncio.run(runtime.set_thread_task_state("thread-1", False)) is False
+
+
+def test_set_thread_task_state_emits_task_events(monkeypatch):
+    runtime = RuntimeRegistry()
+    calls: list[str] = []
+
+    class _FakeEmitter:
+        async def task_start(self):
+            calls.append("start")
+
+        async def task_end(self):
+            calls.append("end")
+
+    fake_session = SimpleNamespace(id="session-1")
+    monkeypatch.setattr(runtime, "_resolve_session", lambda _thread_id: fake_session)
+
+    chainlit_context_module = importlib.import_module("chainlit.context")
+    monkeypatch.setattr(chainlit_context_module, "init_ws_context", lambda _session: None)
+    monkeypatch.setattr(
+        chainlit_context_module,
+        "context",
+        SimpleNamespace(emitter=_FakeEmitter()),
+    )
+
+    assert asyncio.run(runtime.set_thread_task_state("thread-1", True)) is True
+    assert asyncio.run(runtime.set_thread_task_state("thread-1", False)) is True
+    assert calls == ["start", "end"]

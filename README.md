@@ -155,6 +155,9 @@ EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
+EasierlitApp.start_thread_task(thread_id)
+EasierlitApp.end_thread_task(thread_id)
+EasierlitApp.is_thread_task_running(thread_id) -> bool
 EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
@@ -252,21 +255,34 @@ Thread APIs:
 - `app.delete_thread(thread_id)`
 - `app.reset_thread(thread_id)`
 
+Thread task-state APIs:
+
+- `app.start_thread_task(thread_id)`
+- `app.end_thread_task(thread_id)`
+- `app.is_thread_task_running(thread_id)`
+
 Behavior highlights:
 
 - `app.add_message(...)` returns generated `message_id`.
 - `app.enqueue(...)` mirrors input as `user_message` (UI/data layer) and also feeds `app.recv()/app.arecv()`.
 - `app.add_tool(...)` stores tool-call steps with tool name shown as step author/name.
 - `app.add_thought(...)` is the same tool-call path with fixed tool name `Reasoning`.
+- `app.start_thread_task(...)` marks one thread as working and enables internal input lock for that thread.
+- `app.end_thread_task(...)` clears working state and releases internal input lock for that thread.
+- `app.is_thread_task_running(...)` returns current thread working state.
+- While `app.is_thread_task_running(thread_id)` is `True`, web input from `@cl.on_message` for that thread is silently ignored.
+- `app.enqueue(...)` is not blocked by thread task state.
 - `app.get_messages(...)` returns thread metadata plus one ordered `messages` list.
 - `app.get_messages(...)` includes `user_message`/`assistant_message`/`system_message`/`tool` and excludes run-family steps.
 - `app.get_messages(...)` maps `thread["elements"]` into each message via `forId` aliases (`forId`/`for_id`/`stepId`/`step_id`).
 - `app.get_messages(...)` adds `elements[*].has_source` and `elements[*].source` (`url`/`path`/`bytes`/`objectKey`/`chainlitKey`) for image/file source tracing.
 - `app.new_thread(...)` auto-generates a unique `thread_id` and returns it.
 - `app.update_thread(...)` updates only when thread already exists.
+- `app.delete_thread(...)` and `app.reset_thread(...)` automatically clear thread task state.
 - With auth enabled, both `app.new_thread(...)` and `app.update_thread(...)` auto-assign thread ownership.
 - SQLite SQLAlchemyDataLayer path auto normalizes thread `tags`.
 - If no active websocket session exists, Easierlit applies internal HTTP-context fallback for data-layer message CRUD.
+- Public `lock/unlock` APIs are intentionally not exposed.
 
 ## Worker Failure Policy
 

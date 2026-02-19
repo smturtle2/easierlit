@@ -393,6 +393,7 @@ delete_thread(thread_id: str) -> None
 ```
 
 - data layer를 통해 thread 삭제
+- 해당 `thread_id`의 thread 작업 상태를 자동 해제
 
 ### 4.17 `EasierlitApp.reset_thread`
 
@@ -407,6 +408,7 @@ reset_thread(thread_id: str) -> None
 - thread를 삭제한 뒤 동일한 `thread_id`로 재생성
 - 재생성 시 `name`만 복원하고 `metadata`/`tags`는 초기화
 - 해당 `thread_id`의 incoming queue pending 메시지를 제거
+- 해당 `thread_id`의 thread 작업 상태를 자동 해제
 
 예외:
 
@@ -432,6 +434,25 @@ is_closed() -> bool
 ```
 
 - app closed 상태 반환
+
+### 4.20 Thread 작업 상태 API
+
+```python
+start_thread_task(thread_id: str) -> None
+end_thread_task(thread_id: str) -> None
+is_thread_task_running(thread_id: str) -> bool
+```
+
+동작:
+
+- `start_thread_task(...)`는 특정 thread를 작업 중으로 표시하고 해당 thread 내부 입력 잠금을 활성화
+- `end_thread_task(...)`는 작업 중 상태를 해제하고 내부 입력 잠금을 해제
+- `is_thread_task_running(...)`는 해당 thread의 작업 중 상태를 반환
+- 세 메서드 모두 `thread_id`는 비어 있지 않은 문자열이어야 하며 공백 문자열은 `ValueError`
+- 상태 모델은 단순 모드이며 `start_thread_task(thread_id)`를 여러 번 호출해도 `end_thread_task(thread_id)` 1회면 상태 해제
+- thread 작업 중 상태인 동안 해당 thread의 `@cl.on_message` 웹 입력은 조용히 무시
+- `app.enqueue(...)` 경로는 thread 작업 상태의 영향을 받지 않음
+- 공개 `lock/unlock` 메서드는 제공하지 않음
 
 ## 5. 설정 및 데이터 모델
 
@@ -539,6 +560,7 @@ OutgoingCommand(
 
 - `app.recv/arecv` 입력은 user-message 흐름
 - `app.enqueue(...)`는 입력을 `user_message`로 미러링하고 incoming queue에도 주입
+- `app.start_thread_task/end_thread_task`는 thread 작업 상태와 내부 입력 잠금을 제어
 - `app.add_message` 출력은 assistant-message 흐름
 - `app.add_tool/update_tool` 출력은 tool-call 흐름이며 step name은 `tool_name` 사용
 - `app.add_thought/update_thought` 출력은 tool-call 흐름이며 step name은 `Reasoning` 고정
@@ -549,6 +571,7 @@ OutgoingCommand(
 |---|---|
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
 | `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread`, `reset_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
+| `EasierlitApp.start_thread_task`, `end_thread_task`, `is_thread_task_running` | 전용 예제 없음 (런타임/수동 제어 API) |
 | `EasierlitApp.enqueue` | 외부 입력을 `user_message`로 미러링하고 `app.recv()`로 주입하는 in-process 연동 |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |

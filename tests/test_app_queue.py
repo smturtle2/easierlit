@@ -249,3 +249,37 @@ def test_enqueue_raises_app_closed_error_when_app_is_closed():
 
     with pytest.raises(AppClosedError):
         app.enqueue(thread_id="thread-1", content="x")
+
+
+def test_thread_task_state_api_flow():
+    app = EasierlitApp()
+
+    assert app.is_thread_task_running("thread-1") is False
+
+    app.start_thread_task("thread-1")
+    assert app.is_thread_task_running("thread-1") is True
+
+    app.end_thread_task("thread-1")
+    assert app.is_thread_task_running("thread-1") is False
+
+
+def test_thread_task_state_uses_simple_mode_for_repeated_start():
+    app = EasierlitApp()
+
+    app.start_thread_task("thread-1")
+    app.start_thread_task("thread-1")
+    assert app.is_thread_task_running("thread-1") is True
+
+    app.end_thread_task("thread-1")
+    assert app.is_thread_task_running("thread-1") is False
+
+
+def test_thread_task_state_validates_non_empty_thread_id():
+    app = EasierlitApp()
+
+    with pytest.raises(ValueError, match="thread_id"):
+        app.start_thread_task(" ")
+    with pytest.raises(ValueError, match="thread_id"):
+        app.end_thread_task(" ")
+    with pytest.raises(ValueError, match="thread_id"):
+        app.is_thread_task_running(" ")

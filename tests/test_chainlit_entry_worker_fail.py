@@ -219,6 +219,21 @@ def test_on_message_registers_session_for_non_discord_client():
     assert calls == [("thread-1", "session-1")]
 
 
+def test_on_message_ignores_when_thread_task_is_running():
+    runtime = get_runtime()
+    app = EasierlitApp()
+    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    runtime.bind(client=client, app=app)
+    app.start_thread_task("thread-1")
+
+    fake_session = SimpleNamespace(thread_id="thread-1", id="session-1", client_type="webapp")
+    with _swap_attr(chainlit_entry.cl, "context", SimpleNamespace(session=fake_session)):
+        asyncio.run(chainlit_entry._on_message(_sample_message()))
+
+    with pytest.raises(TimeoutError):
+        app.recv(timeout=0.05)
+
+
 def test_on_message_enqueues_incoming_elements():
     runtime = get_runtime()
     app = EasierlitApp()

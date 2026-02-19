@@ -155,6 +155,9 @@ EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
+EasierlitApp.start_thread_task(thread_id)
+EasierlitApp.end_thread_task(thread_id)
+EasierlitApp.is_thread_task_running(thread_id) -> bool
 EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
@@ -252,21 +255,34 @@ Thread API:
 - `app.delete_thread(thread_id)`
 - `app.reset_thread(thread_id)`
 
+Thread 작업 상태 API:
+
+- `app.start_thread_task(thread_id)`
+- `app.end_thread_task(thread_id)`
+- `app.is_thread_task_running(thread_id)`
+
 동작 핵심:
 
 - `app.add_message(...)`는 생성된 `message_id`를 반환
 - `app.enqueue(...)`는 입력을 `user_message`로 UI/data layer에 반영하고 동시에 `app.recv()/app.arecv()`에도 전달
 - `app.add_tool(...)`은 도구 호출 step을 생성하며 도구명은 step author/name으로 표시됩니다.
 - `app.add_thought(...)`는 동일한 도구 호출 경로를 사용하고 도구명은 `Reasoning`으로 고정됩니다.
+- `app.start_thread_task(...)`는 특정 thread를 작업 중 상태로 표시하고 해당 thread 내부 입력 잠금을 활성화합니다.
+- `app.end_thread_task(...)`는 해당 thread의 작업 중 상태를 해제하고 내부 입력 잠금을 해제합니다.
+- `app.is_thread_task_running(...)`는 thread 작업 중 상태를 반환합니다.
+- `app.is_thread_task_running(thread_id)`가 `True`인 동안 해당 thread의 `@cl.on_message` 웹 입력은 조용히 무시됩니다.
+- `app.enqueue(...)` 경로는 thread 작업 상태의 영향을 받지 않습니다.
 - `app.get_messages(...)`은 thread 메타데이터와 순서 보존 `messages` 단일 목록을 반환합니다.
 - `app.get_messages(...)`은 `user_message`/`assistant_message`/`system_message`/`tool`만 포함하고 run 계열 step은 제외합니다.
 - `app.get_messages(...)`은 `thread["elements"]`를 `forId` 별칭(`forId`/`for_id`/`stepId`/`step_id`) 기준으로 각 message에 매핑합니다.
 - `app.get_messages(...)`은 이미지/파일 source 추적을 위해 `elements[*].has_source`와 `elements[*].source`(`url`/`path`/`bytes`/`objectKey`/`chainlitKey`)를 추가합니다.
 - `app.new_thread(...)`는 고유한 `thread_id`를 자동 생성하고 반환
 - `app.update_thread(...)`는 기존 thread만 수정
+- `app.delete_thread(...)`/`app.reset_thread(...)`는 해당 thread 작업 상태를 자동 해제
 - auth 설정 시 `app.new_thread(...)`/`app.update_thread(...)` 모두 소유자를 자동 귀속
 - SQLite SQLAlchemyDataLayer 경로에서 thread `tags` 자동 정규화
 - active websocket session이 없어도 내부 HTTP-context fallback으로 data-layer message CRUD 수행
+- 공개 `lock/unlock` API는 제공하지 않습니다.
 
 ## 워커 실패 정책
 

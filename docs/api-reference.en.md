@@ -393,6 +393,7 @@ delete_thread(thread_id: str) -> None
 ```
 
 - Deletes thread via data layer.
+- Automatically clears thread task state for that `thread_id`.
 
 ### 4.17 `EasierlitApp.reset_thread`
 
@@ -407,6 +408,7 @@ Behavior:
 - Deletes the thread and recreates the same `thread_id`.
 - Restores only thread `name`; recreated thread `metadata` and `tags` are reset.
 - Removes pending incoming queue messages for that `thread_id`.
+- Automatically clears thread task state for that `thread_id`.
 
 Raises:
 
@@ -432,6 +434,25 @@ is_closed() -> bool
 ```
 
 - Returns whether app is closed.
+
+### 4.20 Thread Task State APIs
+
+```python
+start_thread_task(thread_id: str) -> None
+end_thread_task(thread_id: str) -> None
+is_thread_task_running(thread_id: str) -> bool
+```
+
+Behavior:
+
+- `start_thread_task(...)` marks a thread as running and enables internal input lock for that thread.
+- `end_thread_task(...)` clears running state and releases internal input lock for that thread.
+- `is_thread_task_running(...)` returns current running state for that thread.
+- Thread id must be a non-empty string for all three methods; blank values raise `ValueError`.
+- State model is simple: repeated `start_thread_task(thread_id)` calls still require only one `end_thread_task(thread_id)` to clear the state.
+- While thread task state is running, web input for that thread (`@cl.on_message`) is silently ignored.
+- `app.enqueue(...)` is not blocked by thread task state.
+- Public `lock/unlock` methods are intentionally not exposed.
 
 ## 5. Config and Data Models
 
@@ -539,6 +560,7 @@ OutgoingCommand(
 
 - Incoming `app.recv/arecv` maps to user-message flow.
 - `app.enqueue(...)` mirrors input as `user_message` and also feeds the incoming queue.
+- `app.start_thread_task/end_thread_task` controls thread task state and internal input lock.
 - Outgoing `app.add_message` maps to assistant-message flow.
 - Outgoing `app.add_tool/update_tool` maps to tool-call flow with step name set from `tool_name`.
 - Outgoing `app.add_thought/update_thought` maps to tool-call flow with fixed step name `Reasoning`.
@@ -549,6 +571,7 @@ OutgoingCommand(
 |---|---|
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
 | `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread`, `reset_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
+| `EasierlitApp.start_thread_task`, `end_thread_task`, `is_thread_task_running` | No dedicated example yet (runtime/manual control APIs) |
 | `EasierlitApp.enqueue` | In-process integrations that mirror input as `user_message` and feed `app.recv()` |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |

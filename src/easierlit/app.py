@@ -47,6 +47,8 @@ class EasierlitApp:
         self._incoming_queue: queue.Queue[IncomingMessage | None] = queue.Queue()
         self._outgoing_queue: queue.Queue[OutgoingCommand] = queue.Queue()
         self._closed = threading.Event()
+        self._running_thread_tasks: set[str] = set()
+        self._thread_task_state_lock = threading.RLock()
         self._runtime = runtime if runtime is not None else get_runtime()
         self._data_layer_getter = data_layer_getter
         self._uuid_factory = uuid_factory
@@ -70,6 +72,35 @@ class EasierlitApp:
 
     async def arecv(self, timeout: float | None = None) -> IncomingMessage:
         return await asyncio.to_thread(self.recv, timeout)
+
+    def start_thread_task(self, thread_id: str) -> None:
+        resolved_thread_id = self._require_non_empty_thread_id(thread_id)
+        state_changed = self._set_thread_task_running(
+            thread_id=resolved_thread_id,
+            is_running=True,
+        )
+        if state_changed:
+            self._emit_thread_task_state(
+                thread_id=resolved_thread_id,
+                is_running=True,
+            )
+
+    def end_thread_task(self, thread_id: str) -> None:
+        resolved_thread_id = self._require_non_empty_thread_id(thread_id)
+        state_changed = self._set_thread_task_running(
+            thread_id=resolved_thread_id,
+            is_running=False,
+        )
+        if state_changed:
+            self._emit_thread_task_state(
+                thread_id=resolved_thread_id,
+                is_running=False,
+            )
+
+    def is_thread_task_running(self, thread_id: str) -> bool:
+        resolved_thread_id = self._require_non_empty_thread_id(thread_id)
+        with self._thread_task_state_lock:
+            return resolved_thread_id in self._running_thread_tasks
 
     def enqueue(
         self,
@@ -388,32 +419,38 @@ class EasierlitApp:
         async def _delete_thread():
             await data_layer.delete_thread(thread_id)
 
-        self._runtime.run_coroutine_sync(_delete_thread())
+        try:
+            self._runtime.run_coroutine_sync(_delete_thread())
+        finally:
+            self._clear_thread_task_state(thread_id)
 
     def reset_thread(self, thread_id: str) -> None:
-        thread = self.get_thread(thread_id)
-        thread_name = thread.get("name") if isinstance(thread.get("name"), str) else None
-        raw_steps = thread.get("steps")
-        step_items = raw_steps if isinstance(raw_steps, list) else []
-        step_ids: list[str] = []
-        for step in step_items:
-            if not isinstance(step, dict):
-                continue
-            step_id = self._coerce_identifier(step.get("id"))
-            if step_id is None:
-                continue
-            step_ids.append(step_id)
+        try:
+            thread = self.get_thread(thread_id)
+            thread_name = thread.get("name") if isinstance(thread.get("name"), str) else None
+            raw_steps = thread.get("steps")
+            step_items = raw_steps if isinstance(raw_steps, list) else []
+            step_ids: list[str] = []
+            for step in step_items:
+                if not isinstance(step, dict):
+                    continue
+                step_id = self._coerce_identifier(step.get("id"))
+                if step_id is None:
+                    continue
+                step_ids.append(step_id)
 
-        self._delete_thread_steps_immediately(thread_id=thread_id, step_ids=step_ids)
-        self.delete_thread(thread_id)
-        self._write_thread(
-            thread_id=thread_id,
-            name=thread_name,
-            metadata=None,
-            tags=None,
-            require_existing=False,
-        )
-        self._clear_pending_incoming_for_thread(thread_id)
+            self._delete_thread_steps_immediately(thread_id=thread_id, step_ids=step_ids)
+            self.delete_thread(thread_id)
+            self._write_thread(
+                thread_id=thread_id,
+                name=thread_name,
+                metadata=None,
+                tags=None,
+                require_existing=False,
+            )
+            self._clear_pending_incoming_for_thread(thread_id)
+        finally:
+            self._clear_thread_task_state(thread_id)
 
     def close(self) -> None:
         if self._closed.is_set():
@@ -443,6 +480,53 @@ class EasierlitApp:
 
     def _new_message_id(self) -> str:
         return str(self._uuid_factory())
+
+    def _require_non_empty_thread_id(self, thread_id: str) -> str:
+        if not isinstance(thread_id, str):
+            raise ValueError("thread_id must be a non-empty string.")
+        normalized = thread_id.strip()
+        if not normalized:
+            raise ValueError("thread_id must be a non-empty string.")
+        return normalized
+
+    def _set_thread_task_running(self, *, thread_id: str, is_running: bool) -> bool:
+        with self._thread_task_state_lock:
+            was_running = thread_id in self._running_thread_tasks
+            if is_running:
+                self._running_thread_tasks.add(thread_id)
+                return not was_running
+
+            self._running_thread_tasks.discard(thread_id)
+            return was_running
+
+    def _emit_thread_task_state(self, *, thread_id: str, is_running: bool) -> None:
+        # Task indicator emission is best-effort and must not break worker flow.
+        try:
+            self._runtime.run_coroutine_sync(
+                self._runtime.set_thread_task_state(
+                    thread_id=thread_id,
+                    is_running=is_running,
+                )
+            )
+        except Exception:
+            return
+
+    def _clear_thread_task_state(self, thread_id: str) -> None:
+        if not isinstance(thread_id, str):
+            return
+        normalized = thread_id.strip()
+        if not normalized:
+            return
+
+        state_changed = self._set_thread_task_running(
+            thread_id=normalized,
+            is_running=False,
+        )
+        if state_changed:
+            self._emit_thread_task_state(
+                thread_id=normalized,
+                is_running=False,
+            )
 
     def _enqueue_outgoing_command(
         self,
