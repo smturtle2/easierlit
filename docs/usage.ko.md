@@ -79,7 +79,7 @@ EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
-EasierlitApp.enqueue(thread_id, content, session_id="external", author="External", message_id=None, metadata=None, elements=None, created_at=None) -> str
+EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name은 "Reasoning" 고정
@@ -93,6 +93,7 @@ EasierlitApp.get_messages(thread_id) -> dict
 EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
+EasierlitApp.reset_thread(thread_id)
 EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
@@ -213,7 +214,7 @@ Thread History 표시 조건(Chainlit 정책):
 
 외부 in-process 입력:
 
-- `app.enqueue(...)`로 Chainlit/Discord 외 입력을 동일한 `app.recv()/app.arecv()` 흐름으로 주입할 수 있습니다.
+- `app.enqueue(...)`는 입력을 `user_message`로 UI/data layer에 반영하고 동시에 `app.recv()/app.arecv()` 흐름에도 주입합니다.
 - 같은 프로세스에서 동작하는 webhook/내부 연동 코드에 적합합니다.
 
 ## 8. App에서 Thread CRUD
@@ -226,12 +227,14 @@ Thread History 표시 조건(Chainlit 정책):
 - `new_thread(name=None, metadata=None, tags=None) -> str`
 - `update_thread(thread_id, name=None, metadata=None, tags=None)`
 - `delete_thread(thread_id)`
+- `reset_thread(thread_id)`
 
 동작 상세:
 
 - Thread CRUD는 data layer가 필요합니다.
 - `new_thread`는 고유한 thread id를 자동 생성하고 반환합니다.
 - `update_thread`는 대상 thread가 이미 있을 때만 수정합니다.
+- `reset_thread`는 thread 메시지를 전부 삭제하고 동일한 thread id로 재생성하며, `name`만 복원하고 해당 thread의 pending incoming 메시지도 제거합니다.
 - `get_messages`는 thread 메타데이터와 순서 보존 `messages` 단일 목록을 반환합니다.
 - `get_messages`는 `user_message`/`assistant_message`/`system_message`/`tool` step 타입만 포함합니다.
 - `get_messages`는 `thread["elements"]`를 `forId` 별칭(`forId`, `for_id`, `stepId`, `step_id`) 기준으로 매핑해 각 message에 `elements`를 포함합니다.

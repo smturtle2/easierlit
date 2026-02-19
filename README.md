@@ -155,7 +155,7 @@ EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
-EasierlitApp.enqueue(thread_id, content, session_id="external", author="External", message_id=None, metadata=None, elements=None, created_at=None) -> str
+EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None, elements=None) -> str  # tool_name is fixed to "Reasoning"
@@ -169,6 +169,7 @@ EasierlitApp.get_messages(thread_id) -> dict
 EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
+EasierlitApp.reset_thread(thread_id)
 EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
@@ -249,10 +250,12 @@ Thread APIs:
 - `app.new_thread(...)`
 - `app.update_thread(...)`
 - `app.delete_thread(thread_id)`
+- `app.reset_thread(thread_id)`
 
 Behavior highlights:
 
 - `app.add_message(...)` returns generated `message_id`.
+- `app.enqueue(...)` mirrors input as `user_message` (UI/data layer) and also feeds `app.recv()/app.arecv()`.
 - `app.add_tool(...)` stores tool-call steps with tool name shown as step author/name.
 - `app.add_thought(...)` is the same tool-call path with fixed tool name `Reasoning`.
 - `app.get_messages(...)` returns thread metadata plus one ordered `messages` list.

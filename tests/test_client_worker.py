@@ -253,9 +253,14 @@ def test_finished_run_func_does_not_stop_other_run_funcs():
     assert app.is_closed() is False
 
     app.enqueue(thread_id="thread-1", content="hello")
-    command = app._pop_outgoing(timeout=2.0)
-    assert command.command == "add_message"
-    assert command.content == "HELLO"
+    enqueue_command = app._pop_outgoing(timeout=2.0)
+    worker_command = app._pop_outgoing(timeout=2.0)
+    assert enqueue_command.command == "add_message"
+    assert enqueue_command.content == "hello"
+    assert enqueue_command.author == "User"
+    assert enqueue_command.step_type == "user_message"
+    assert worker_command.command == "add_message"
+    assert worker_command.content == "HELLO"
 
     client.stop()
 

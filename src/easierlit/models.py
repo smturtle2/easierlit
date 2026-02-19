@@ -30,4 +30,5 @@ class OutgoingCommand(BaseModel):
     content: str | None = None
     elements: list[Any] = Field(default_factory=list)
     author: str = "Assistant"
+    step_type: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

@@ -79,7 +79,7 @@ EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
-EasierlitApp.enqueue(thread_id, content, session_id="external", author="External", message_id=None, metadata=None, elements=None, created_at=None) -> str
+EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name is fixed to "Reasoning"
@@ -93,6 +93,7 @@ EasierlitApp.get_messages(thread_id) -> dict
 EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
+EasierlitApp.reset_thread(thread_id)
 EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
@@ -213,7 +214,7 @@ If `run_func` raises uncaught exception:
 
 External in-process input:
 
-- `app.enqueue(...)` lets you push non-Chainlit/non-Discord input into the same `app.recv()/app.arecv()` flow.
+- `app.enqueue(...)` mirrors input as `user_message` for UI/data-layer visibility and also feeds `app.recv()/app.arecv()`.
 - Typical usage is webhook/internal integration code that shares the same process.
 
 ## 8. Thread CRUD in App
@@ -226,12 +227,14 @@ Available methods on `EasierlitApp`:
 - `new_thread(name=None, metadata=None, tags=None) -> str`
 - `update_thread(thread_id, name=None, metadata=None, tags=None)`
 - `delete_thread(thread_id)`
+- `reset_thread(thread_id)`
 
 Behavior details:
 
 - Data layer is required for thread CRUD.
 - `new_thread` auto-generates a unique thread id and returns it.
 - `update_thread` updates only when target thread already exists.
+- `reset_thread` deletes all thread messages, recreates the same thread id, restores only thread `name`, and clears pending incoming messages for that thread.
 - `get_messages` returns thread metadata and one ordered `messages` list.
 - `get_messages` keeps only `user_message`/`assistant_message`/`system_message`/`tool` step types.
 - `get_messages` maps `thread["elements"]` by `forId` aliases: `forId`, `for_id`, `stepId`, `step_id`.

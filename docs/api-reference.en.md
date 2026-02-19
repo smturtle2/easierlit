@@ -165,7 +165,7 @@ enqueue(
     thread_id: str,
     content: str,
     session_id: str = "external",
-    author: str = "External",
+    author: str = "User",
     message_id: str | None = None,
     metadata: dict[str, Any] | None = None,
     elements: list[Any] | None = None,
@@ -175,6 +175,7 @@ enqueue(
 
 Behavior:
 
+- Enqueues outgoing `add_message` command with `step_type="user_message"` for immediate UI/data-layer visibility.
 - Builds an `IncomingMessage` and enqueues it into app incoming queue.
 - Returns the enqueued `message_id`.
 - Uses generated UUID message id when `message_id` is omitted.
@@ -393,7 +394,26 @@ delete_thread(thread_id: str) -> None
 
 - Deletes thread via data layer.
 
-### 4.17 `EasierlitApp.close`
+### 4.17 `EasierlitApp.reset_thread`
+
+```python
+reset_thread(thread_id: str) -> None
+```
+
+Behavior:
+
+- Verifies target thread existence via `get_thread(thread_id)`.
+- Collects existing step ids and applies immediate `delete` commands via runtime (realtime + data-layer fallback path).
+- Deletes the thread and recreates the same `thread_id`.
+- Restores only thread `name`; recreated thread `metadata` and `tags` are reset.
+- Removes pending incoming queue messages for that `thread_id`.
+
+Raises:
+
+- `DataPersistenceNotEnabledError` when no data layer is configured.
+- `ValueError` if thread does not exist.
+
+### 4.18 `EasierlitApp.close`
 
 ```python
 close() -> None
@@ -405,7 +425,7 @@ Behavior:
 - Unblocks `recv/arecv` waiters.
 - Enqueues `close` outgoing command for dispatcher shutdown.
 
-### 4.18 `EasierlitApp.is_closed`
+### 4.19 `EasierlitApp.is_closed`
 
 ```python
 is_closed() -> bool
@@ -518,6 +538,7 @@ OutgoingCommand(
 ## 7. Chainlit Message vs Tool-call Mapping
 
 - Incoming `app.recv/arecv` maps to user-message flow.
+- `app.enqueue(...)` mirrors input as `user_message` and also feeds the incoming queue.
 - Outgoing `app.add_message` maps to assistant-message flow.
 - Outgoing `app.add_tool/update_tool` maps to tool-call flow with step name set from `tool_name`.
 - Outgoing `app.add_thought/update_thought` maps to tool-call flow with fixed step name `Reasoning`.
@@ -527,8 +548,8 @@ OutgoingCommand(
 | Method group | Example |
 |---|---|
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
-| `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
-| `EasierlitApp.enqueue` | In-process integrations that feed external input into `app.recv()` |
+| `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread`, `reset_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
+| `EasierlitApp.enqueue` | In-process integrations that mirror input as `user_message` and feed `app.recv()` |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
 | Auth + persistence configs | `examples/custom_auth.py` |

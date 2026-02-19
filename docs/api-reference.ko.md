@@ -165,7 +165,7 @@ enqueue(
     thread_id: str,
     content: str,
     session_id: str = "external",
-    author: str = "External",
+    author: str = "User",
     message_id: str | None = None,
     metadata: dict[str, Any] | None = None,
     elements: list[Any] | None = None,
@@ -175,6 +175,7 @@ enqueue(
 
 동작:
 
+- 즉시 UI/data layer 반영을 위해 `step_type="user_message"`인 `add_message` outgoing command를 먼저 큐에 적재
 - `IncomingMessage`를 생성해 app incoming queue에 적재
 - 적재된 `message_id` 반환
 - `message_id` 생략 시 UUID 기반 자동 생성
@@ -393,7 +394,26 @@ delete_thread(thread_id: str) -> None
 
 - data layer를 통해 thread 삭제
 
-### 4.17 `EasierlitApp.close`
+### 4.17 `EasierlitApp.reset_thread`
+
+```python
+reset_thread(thread_id: str) -> None
+```
+
+동작:
+
+- `get_thread(thread_id)`로 대상 thread 존재를 확인
+- 기존 step id를 수집해 runtime 경로(realtime + data-layer fallback)로 `delete` command를 즉시 적용
+- thread를 삭제한 뒤 동일한 `thread_id`로 재생성
+- 재생성 시 `name`만 복원하고 `metadata`/`tags`는 초기화
+- 해당 `thread_id`의 incoming queue pending 메시지를 제거
+
+예외:
+
+- data layer 미설정 시 `DataPersistenceNotEnabledError`
+- thread가 없으면 `ValueError`
+
+### 4.18 `EasierlitApp.close`
 
 ```python
 close() -> None
@@ -405,7 +425,7 @@ close() -> None
 - 대기 중 `recv/arecv`를 해제
 - dispatcher 종료를 위한 `close` command 큐 적재
 
-### 4.18 `EasierlitApp.is_closed`
+### 4.19 `EasierlitApp.is_closed`
 
 ```python
 is_closed() -> bool
@@ -518,6 +538,7 @@ OutgoingCommand(
 ## 7. Chainlit Message vs Tool-call 매핑
 
 - `app.recv/arecv` 입력은 user-message 흐름
+- `app.enqueue(...)`는 입력을 `user_message`로 미러링하고 incoming queue에도 주입
 - `app.add_message` 출력은 assistant-message 흐름
 - `app.add_tool/update_tool` 출력은 tool-call 흐름이며 step name은 `tool_name` 사용
 - `app.add_thought/update_thought` 출력은 tool-call 흐름이며 step name은 `Reasoning` 고정
@@ -527,8 +548,8 @@ OutgoingCommand(
 | 메서드 그룹 | 예제 |
 |---|---|
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
-| `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
-| `EasierlitApp.enqueue` | 외부 입력을 `app.recv()`로 주입하는 in-process 연동 |
+| `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread`, `reset_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
+| `EasierlitApp.enqueue` | 외부 입력을 `user_message`로 미러링하고 `app.recv()`로 주입하는 in-process 연동 |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
 | 인증/영속성 설정 | `examples/custom_auth.py` |

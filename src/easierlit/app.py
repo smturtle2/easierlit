@@ -77,7 +77,7 @@ class EasierlitApp:
         content: str,
         *,
         session_id: str = "external",
-        author: str = "External",
+        author: str = "User",
         message_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         elements: list[Any] | None = None,
@@ -96,15 +96,29 @@ class EasierlitApp:
         elif not isinstance(resolved_message_id, str) or not resolved_message_id.strip():
             raise ValueError("message_id must be a non-empty string when provided.")
 
+        resolved_elements = elements or []
+        resolved_metadata = metadata or {}
+
+        self._enqueue_outgoing_command(
+            command="add_message",
+            thread_id=thread_id,
+            message_id=resolved_message_id,
+            content=content,
+            author=author,
+            step_type="user_message",
+            metadata=resolved_metadata,
+            elements=resolved_elements,
+        )
+
         incoming = IncomingMessage(
             thread_id=thread_id,
             session_id=session_id,
             message_id=resolved_message_id,
             content=content,
-            elements=elements or [],
+            elements=resolved_elements,
             author=author,
             created_at=created_at,
-            metadata=metadata or {},
+            metadata=resolved_metadata,
         )
         self._enqueue_incoming(incoming)
         return resolved_message_id
@@ -365,6 +379,31 @@ class EasierlitApp:
 
         self._runtime.run_coroutine_sync(_delete_thread())
 
+    def reset_thread(self, thread_id: str) -> None:
+        thread = self.get_thread(thread_id)
+        thread_name = thread.get("name") if isinstance(thread.get("name"), str) else None
+        raw_steps = thread.get("steps")
+        step_items = raw_steps if isinstance(raw_steps, list) else []
+        step_ids: list[str] = []
+        for step in step_items:
+            if not isinstance(step, dict):
+                continue
+            step_id = self._coerce_identifier(step.get("id"))
+            if step_id is None:
+                continue
+            step_ids.append(step_id)
+
+        self._delete_thread_steps_immediately(thread_id=thread_id, step_ids=step_ids)
+        self.delete_thread(thread_id)
+        self._write_thread(
+            thread_id=thread_id,
+            name=thread_name,
+            metadata=None,
+            tags=None,
+            require_existing=False,
+        )
+        self._clear_pending_incoming_for_thread(thread_id)
+
     def close(self) -> None:
         if self._closed.is_set():
             return
@@ -402,6 +441,7 @@ class EasierlitApp:
         message_id: str | None = None,
         content: str | None = None,
         author: str = "Assistant",
+        step_type: str | None = None,
         metadata: dict | None = None,
         elements: list[Any] | None = None,
     ) -> None:
@@ -413,9 +453,45 @@ class EasierlitApp:
                 content=content,
                 elements=elements or [],
                 author=author,
+                step_type=step_type,
                 metadata=metadata or {},
             )
         )
+
+    def _delete_thread_steps_immediately(self, *, thread_id: str, step_ids: list[str]) -> None:
+        if not step_ids:
+            return
+
+        for step_id in step_ids:
+            self._runtime.run_coroutine_sync(
+                self._runtime.apply_outgoing_command(
+                    OutgoingCommand(
+                        command="delete",
+                        thread_id=thread_id,
+                        message_id=step_id,
+                    )
+                )
+            )
+
+    def _clear_pending_incoming_for_thread(self, thread_id: str) -> None:
+        retained_items: list[IncomingMessage | None] = []
+        while True:
+            try:
+                item = self._incoming_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            if item is None:
+                retained_items.append(item)
+                continue
+
+            if item.thread_id == thread_id:
+                continue
+
+            retained_items.append(item)
+
+        for item in retained_items:
+            self._incoming_queue.put_nowait(item)
 
     def _get_data_layer_or_raise(self):
         data_layer = self._data_layer_getter()

@@ -11,6 +11,7 @@ from easierlit import (
     EasierlitApp,
     EasierlitAuthConfig,
     EasierlitClient,
+    IncomingMessage,
     ThreadSessionNotActiveError,
 )
 from easierlit.runtime import RuntimeRegistry, get_runtime
@@ -96,6 +97,7 @@ class FakeDataLayer:
 
     async def delete_thread(self, thread_id: str):
         self.deleted_threads.append(thread_id)
+        self._threads.discard(thread_id)
 
     async def create_step(self, step_dict):
         self.created_steps.append(step_dict)
@@ -204,6 +206,103 @@ def test_thread_crud_with_data_layer():
 
     app.delete_thread("thread-1")
     assert fake.deleted_threads == ["thread-1"]
+
+
+def test_reset_thread_recreates_same_thread_id_and_only_restores_name():
+    class _FakeDataLayerForReset(FakeDataLayer):
+        async def get_thread(self, thread_id: str):
+            self.requested_threads.append(thread_id)
+            if thread_id not in self._threads:
+                return None
+            return {
+                "id": thread_id,
+                "name": "Reset Name",
+                "metadata": {"keep": "no"},
+                "tags": ["tag-a"],
+                "steps": [
+                    {"id": "msg-1", "type": "user_message"},
+                    {"id": "msg-2", "type": "assistant_message"},
+                    {"id": None, "type": "assistant_message"},
+                    "invalid-step",
+                ],
+            }
+
+    fake = _FakeDataLayerForReset()
+    runtime = RuntimeRegistry(
+        data_layer_getter=lambda: fake,
+        init_http_context_fn=lambda **_kwargs: None,
+    )
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake)
+
+    app.reset_thread("thread-1")
+
+    assert fake.deleted_steps == ["msg-1", "msg-2"]
+    assert fake.deleted_threads == ["thread-1"]
+    assert fake.updated_threads[0]["thread_id"] == "thread-1"
+    assert fake.updated_threads[0]["name"] == "Reset Name"
+    assert fake.updated_threads[0]["metadata"] is None
+    assert fake.updated_threads[0]["tags"] is None
+
+
+def test_reset_thread_clears_pending_incoming_messages_for_thread():
+    fake = FakeDataLayer()
+    runtime = RuntimeRegistry(
+        data_layer_getter=lambda: fake,
+        init_http_context_fn=lambda **_kwargs: None,
+    )
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake)
+
+    app._enqueue_incoming(
+        IncomingMessage(
+            thread_id="thread-1",
+            session_id="session-1",
+            message_id="msg-1",
+            content="clear me",
+            author="User",
+        )
+    )
+    app._enqueue_incoming(
+        IncomingMessage(
+            thread_id="thread-2",
+            session_id="session-2",
+            message_id="msg-2",
+            content="keep me",
+            author="User",
+        )
+    )
+    app._enqueue_incoming(
+        IncomingMessage(
+            thread_id="thread-1",
+            session_id="session-3",
+            message_id="msg-3",
+            content="clear me too",
+            author="User",
+        )
+    )
+
+    app.reset_thread("thread-1")
+
+    received = app.recv(timeout=1.0)
+    assert received.thread_id == "thread-2"
+    assert received.content == "keep me"
+
+    with pytest.raises(TimeoutError):
+        app.recv(timeout=0.05)
+
+
+def test_reset_thread_raises_for_missing_thread():
+    fake = FakeDataLayer()
+    app = EasierlitApp(data_layer_getter=lambda: fake)
+
+    with pytest.raises(ValueError, match="missing-thread"):
+        app.reset_thread("missing-thread")
+
+
+def test_reset_thread_requires_data_layer():
+    app = EasierlitApp(data_layer_getter=lambda: None)
+
+    with pytest.raises(DataPersistenceNotEnabledError):
+        app.reset_thread("thread-1")
 
 
 def test_get_messages_preserves_supported_order_and_maps_elements():

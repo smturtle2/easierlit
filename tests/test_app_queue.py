@@ -178,12 +178,20 @@ def test_enqueue_default_values_and_recv_flow():
     app = EasierlitApp()
 
     message_id = app.enqueue(thread_id="thread-3", content="from external")
+    enqueue_cmd = app._pop_outgoing(timeout=1.0)
     incoming = app.recv(timeout=1.0)
+
+    assert enqueue_cmd.command == "add_message"
+    assert enqueue_cmd.thread_id == "thread-3"
+    assert enqueue_cmd.message_id == message_id
+    assert enqueue_cmd.content == "from external"
+    assert enqueue_cmd.author == "User"
+    assert enqueue_cmd.step_type == "user_message"
 
     assert incoming.thread_id == "thread-3"
     assert incoming.content == "from external"
     assert incoming.session_id == "external"
-    assert incoming.author == "External"
+    assert incoming.author == "User"
     assert incoming.message_id == message_id
     assert isinstance(message_id, str)
     assert message_id
@@ -202,9 +210,18 @@ def test_enqueue_with_explicit_values_returns_same_message_id():
         elements=[{"id": "el-1"}],
         created_at="2026-02-18T10:00:00Z",
     )
+    enqueue_cmd = app._pop_outgoing(timeout=1.0)
     incoming = app.recv(timeout=1.0)
 
     assert message_id == "msg-explicit"
+    assert enqueue_cmd.command == "add_message"
+    assert enqueue_cmd.thread_id == "thread-4"
+    assert enqueue_cmd.message_id == "msg-explicit"
+    assert enqueue_cmd.author == "Webhook"
+    assert enqueue_cmd.step_type == "user_message"
+    assert enqueue_cmd.content == "payload"
+    assert enqueue_cmd.metadata == {"source": "integration"}
+    assert enqueue_cmd.elements == [{"id": "el-1"}]
     assert incoming.message_id == "msg-explicit"
     assert incoming.session_id == "session-x"
     assert incoming.author == "Webhook"

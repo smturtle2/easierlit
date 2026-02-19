@@ -155,7 +155,7 @@ EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
 
 EasierlitApp.recv(timeout=None)
 EasierlitApp.arecv(timeout=None)
-EasierlitApp.enqueue(thread_id, content, session_id="external", author="External", message_id=None, metadata=None, elements=None, created_at=None) -> str
+EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None, elements=None) -> str  # tool_name은 "Reasoning" 고정
@@ -169,6 +169,7 @@ EasierlitApp.get_messages(thread_id) -> dict
 EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
+EasierlitApp.reset_thread(thread_id)
 EasierlitApp.close()
 
 EasierlitAuthConfig(username, password, identifier=None, metadata=None)
@@ -249,10 +250,12 @@ Thread API:
 - `app.new_thread(...)`
 - `app.update_thread(...)`
 - `app.delete_thread(thread_id)`
+- `app.reset_thread(thread_id)`
 
 동작 핵심:
 
 - `app.add_message(...)`는 생성된 `message_id`를 반환
+- `app.enqueue(...)`는 입력을 `user_message`로 UI/data layer에 반영하고 동시에 `app.recv()/app.arecv()`에도 전달
 - `app.add_tool(...)`은 도구 호출 step을 생성하며 도구명은 step author/name으로 표시됩니다.
 - `app.add_thought(...)`는 동일한 도구 호출 경로를 사용하고 도구명은 `Reasoning`으로 고정됩니다.
 - `app.get_messages(...)`은 thread 메타데이터와 순서 보존 `messages` 단일 목록을 반환합니다.

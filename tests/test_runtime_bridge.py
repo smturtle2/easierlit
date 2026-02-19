@@ -128,3 +128,38 @@ def test_apply_outgoing_command_discord_also_persists_when_data_layer_exists():
     assert fake_data_layer.created_steps[0]["id"] == "msg-1"
     assert fake_data_layer.created_steps[0]["threadId"] == "thread-1"
     assert fake_data_layer.created_steps[0]["type"] == "assistant_message"
+
+
+def test_apply_outgoing_command_respects_explicit_step_type():
+    class _FakeDataLayer:
+        def __init__(self):
+            self.created_steps = []
+
+        async def create_step(self, step_dict):
+            self.created_steps.append(step_dict)
+
+        async def update_step(self, step_dict):
+            self.created_steps.append(step_dict)
+
+        async def delete_step(self, _step_id: str):
+            return None
+
+    fake_data_layer = _FakeDataLayer()
+    runtime = RuntimeRegistry(
+        data_layer_getter=lambda: fake_data_layer,
+        init_http_context_fn=lambda **_kwargs: None,
+    )
+
+    command = OutgoingCommand(
+        command="add_message",
+        thread_id="thread-1",
+        message_id="msg-1",
+        content="hello from webhook",
+        author="Webhook",
+        step_type="user_message",
+    )
+    asyncio.run(runtime.apply_outgoing_command(command))
+
+    assert len(fake_data_layer.created_steps) == 1
+    assert fake_data_layer.created_steps[0]["type"] == "user_message"
+    assert fake_data_layer.created_steps[0]["name"] == "Webhook"

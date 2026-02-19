@@ -414,11 +414,12 @@ class RuntimeRegistry:
     ) -> dict[str, Any]:
         created_at = timestamp if timestamp is not None else self._utc_now_fn()
         is_tool_command = self._is_tool_command(command.command)
+        step_type = command.step_type or ("tool" if is_tool_command else "assistant_message")
         return {
             "id": message_id,
             "threadId": thread_id,
             "name": command.author,
-            "type": "tool" if is_tool_command else "assistant_message",
+            "type": step_type,
             "output": command.content or "",
             "createdAt": created_at,
             "start": created_at,
