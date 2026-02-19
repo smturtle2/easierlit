@@ -117,7 +117,7 @@ Easierlit server enforces these defaults:
 - Easierlit restores previous `CHAINLIT_AUTH_COOKIE_NAME` and `CHAINLIT_AUTH_SECRET` after shutdown.
 - `UVICORN_WS_PROTOCOL` defaults to `websockets-sansio` when not set.
 - `run_func` fail-fast: any worker exception triggers server shutdown.
-- Discord integration is disabled by default during `serve()`, even if `DISCORD_BOT_TOKEN` is already set.
+- Discord bridge is disabled by default unless `discord=EasierlitDiscordConfig(...)` is provided.
 
 ## 6. Auth, Persistence, and Discord
 
@@ -189,7 +189,7 @@ Discord token resolution policy:
 - If it is missing, `DISCORD_BOT_TOKEN` is used as fallback.
 - If Discord is enabled and no non-empty token is available, `serve()` raises `ValueError`.
 - Easierlit runs Discord via its own bridge (no runtime monkeypatching of Chainlit Discord handlers).
-- During `serve()`, Chainlit's `DISCORD_BOT_TOKEN` startup path is kept disabled and the original env value is restored after shutdown.
+- During `serve()`, Easierlit does not clear `DISCORD_BOT_TOKEN`; the env value remains unchanged.
 
 Thread History visibility follows Chainlit policy:
 

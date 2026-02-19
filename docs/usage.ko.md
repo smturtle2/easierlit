@@ -117,7 +117,7 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 - 종료 시 Easierlit이 `CHAINLIT_AUTH_COOKIE_NAME`/`CHAINLIT_AUTH_SECRET`를 이전 값으로 복원
 - `UVICORN_WS_PROTOCOL`이 비어 있으면 `websockets-sansio`를 기본값으로 사용
 - `run_func` fail-fast: 어떤 워커에서든 예외 발생 시 서버 종료 트리거
-- `serve()` 실행 중 Discord 연동은 기본 비활성(`DISCORD_BOT_TOKEN`이 이미 있어도 비활성)
+- `discord=EasierlitDiscordConfig(...)`를 전달하지 않으면 Discord bridge는 기본 비활성
 
 ## 6. 인증, 영속성, Discord
 
@@ -189,7 +189,7 @@ Discord 토큰 해석 정책:
 - config token이 없으면 `DISCORD_BOT_TOKEN`을 폴백으로 사용
 - Discord 활성화 상태에서 유효 토큰이 없으면 `serve()`가 `ValueError` 발생
 - Easierlit은 자체 Discord bridge로 동작하며 Chainlit Discord handler를 런타임에 monkeypatch하지 않음
-- `serve()` 동안 Chainlit의 `DISCORD_BOT_TOKEN` startup 경로를 비활성으로 유지하고 종료 후 기존 env 값을 복원
+- `serve()` 동안 Easierlit은 `DISCORD_BOT_TOKEN`을 비우지 않으며 env 값은 그대로 유지
 
 Thread History 표시 조건(Chainlit 정책):
 

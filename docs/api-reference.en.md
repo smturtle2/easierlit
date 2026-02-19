@@ -52,7 +52,7 @@ Behavior:
 - Sets `UVICORN_WS_PROTOCOL=websockets-sansio` when not already configured.
 - Resolves Discord token as `bot_token` first, then `DISCORD_BOT_TOKEN` fallback.
 - Runs Discord through Easierlit's own bridge (no runtime monkeypatching of Chainlit Discord handlers).
-- Keeps Chainlit's `DISCORD_BOT_TOKEN` startup path disabled during `serve()` and restores the previous env value on shutdown.
+- Does not clear `DISCORD_BOT_TOKEN` during `serve()`; the env value remains unchanged.
 - Restores previous `CHAINLIT_AUTH_COOKIE_NAME` and `CHAINLIT_AUTH_SECRET` after shutdown.
 - On shutdown, calls `client.stop()` and unbinds runtime.
 - Uses fail-fast policy on worker crash.
@@ -485,7 +485,7 @@ Behavior:
 - Passing `discord=EasierlitDiscordConfig(...)` enables Discord by default.
 - `enabled=False`: Easierlit Discord bridge is not started.
 - `enabled=True`: Discord bot token order is `bot_token` first (if non-empty), then `DISCORD_BOT_TOKEN` as fallback.
-- Easierlit keeps Chainlit's `DISCORD_BOT_TOKEN` startup path disabled and restores the original env value after shutdown.
+- Easierlit does not clear `DISCORD_BOT_TOKEN` while serving.
 - Raises `ValueError` if Discord is enabled and no non-empty token is available.
 
 ### 5.4 `IncomingMessage`

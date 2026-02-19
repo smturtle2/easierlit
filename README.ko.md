@@ -207,7 +207,7 @@ EasierlitDiscordConfig(enabled=True, bot_token=None)
 - 로컬 파일/이미지 URL은 `CHAINLIT_PARENT_ROOT_PATH` + `CHAINLIT_ROOT_PATH` prefix를 함께 반영합니다.
 - SQLite 스키마 불일치 시 백업 후 재생성
 - sidebar 기본 상태는 `open`으로 강제
-- `serve()` 실행 중 Discord 연동은 기본 비활성입니다(`DISCORD_BOT_TOKEN`이 기존에 있어도 비활성).
+- `discord=EasierlitDiscordConfig(...)`를 전달하지 않으면 Discord bridge는 기본 비활성입니다.
 
 Thread History 표시 조건(Chainlit 정책):
 
@@ -227,7 +227,7 @@ Discord 봇 구성:
 - `discord=EasierlitDiscordConfig(...)`를 전달하면 기본 활성
 - 토큰 우선순위: `EasierlitDiscordConfig.bot_token` 우선, `DISCORD_BOT_TOKEN` 폴백
 - Easierlit은 자체 Discord bridge로 동작하며 Chainlit Discord handler를 런타임에 monkeypatch하지 않음
-- `serve()` 중에는 Chainlit의 `DISCORD_BOT_TOKEN` 경로를 비활성으로 유지하고, 종료 시 기존 env 값을 복원
+- `serve()` 중에도 Easierlit은 `DISCORD_BOT_TOKEN`을 비우지 않으며, env 값은 그대로 유지됨
 - 활성화 상태에서 비어 있지 않은 토큰을 찾지 못하면 `serve()`가 `ValueError`를 발생
 
 ## Message / Thread 작업

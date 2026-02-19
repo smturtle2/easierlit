@@ -103,10 +103,6 @@ class EasierlitServer:
         self.client.run(app)
 
         try:
-            # Disable Chainlit built-in Discord bootstrapping. Easierlit runs its
-            # own bridge through runtime.get_discord_token().
-            self._restore_env_var("DISCORD_BOT_TOKEN", None)
-
             self._environ["CHAINLIT_HOST"] = self.host
             self._environ["CHAINLIT_PORT"] = str(self.port)
             self._environ["CHAINLIT_ROOT_PATH"] = self.root_path

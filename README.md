@@ -207,7 +207,7 @@ This includes parameter constraints, return semantics, exceptions, side effects,
 - Local file/image URLs include both `CHAINLIT_PARENT_ROOT_PATH` and `CHAINLIT_ROOT_PATH` prefixes
 - If SQLite schema is incompatible, Easierlit recreates DB with backup
 - Sidebar default state is forced to `open`
-- Discord integration is disabled by default during `serve()`, even if `DISCORD_BOT_TOKEN` already exists.
+- Discord bridge is disabled by default unless `discord=EasierlitDiscordConfig(...)` is provided.
 
 Thread History sidebar visibility follows Chainlit policy:
 
@@ -227,7 +227,7 @@ Discord bot setup:
 - Pass `discord=EasierlitDiscordConfig(...)` to enable it.
 - Token precedence: `EasierlitDiscordConfig.bot_token` first, `DISCORD_BOT_TOKEN` fallback.
 - Easierlit runs Discord through its own bridge (no runtime monkeypatching of Chainlit Discord handlers).
-- During `serve()`, Chainlit's `DISCORD_BOT_TOKEN` path stays disabled; Easierlit restores the original env value after shutdown.
+- During `serve()`, Easierlit does not clear `DISCORD_BOT_TOKEN`; the env value remains unchanged.
 - If enabled and no non-empty token is available, `serve()` raises `ValueError`.
 
 ## Message and Thread Operations

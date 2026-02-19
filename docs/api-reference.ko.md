@@ -52,7 +52,7 @@ serve() -> None
 - `UVICORN_WS_PROTOCOL`이 비어 있으면 `websockets-sansio`를 기본값으로 설정
 - Discord 토큰 해석 순서: `bot_token` 우선, 없으면 `DISCORD_BOT_TOKEN` 폴백
 - Chainlit Discord handler를 런타임 monkeypatch하지 않고 Easierlit 자체 Discord bridge를 사용
-- `serve()` 동안 Chainlit의 `DISCORD_BOT_TOKEN` startup 경로를 비활성으로 유지하고 종료 시 기존 env 값을 복원
+- `serve()` 동안 `DISCORD_BOT_TOKEN`을 비우지 않으며 env 값은 그대로 유지
 - 종료 시 `CHAINLIT_AUTH_COOKIE_NAME`/`CHAINLIT_AUTH_SECRET`도 기존 env 값으로 복원
 - 종료 시 `client.stop()` 호출 후 runtime unbind
 - 워커 크래시에 대해 fail-fast 정책 적용
@@ -485,7 +485,7 @@ EasierlitDiscordConfig(
 - `discord=EasierlitDiscordConfig(...)`를 전달하면 기본 활성
 - `enabled=False`: Easierlit Discord bridge를 시작하지 않음
 - `enabled=True`: Discord 토큰 우선순위는 `bot_token`(비어 있지 않은 경우) 우선, `DISCORD_BOT_TOKEN` 폴백
-- `serve()` 동안 Chainlit의 `DISCORD_BOT_TOKEN` startup 경로를 비활성으로 유지하고 종료 후 기존 env 값을 복원
+- `serve()` 동안 Easierlit은 `DISCORD_BOT_TOKEN`을 비우지 않음
 - 활성화 상태에서 비어 있지 않은 토큰이 없으면 `ValueError`
 
 ### 5.4 `IncomingMessage`

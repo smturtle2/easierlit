@@ -368,7 +368,7 @@ def test_discord_enabled_prefers_config_token():
     )
     server.serve()
 
-    assert observed["token"] is None
+    assert observed["token"] == "env-token"
     assert observed["runtime_token"] == "config-token"
     assert fake_env["DISCORD_BOT_TOKEN"] == "env-token"
 
@@ -456,7 +456,7 @@ def test_discord_default_is_disabled_even_if_env_exists():
     server.serve()
 
     assert observed["runtime_token"] is None
-    assert observed["env_during_serve"] is None
+    assert observed["env_during_serve"] == "env-token"
     assert fake_env["DISCORD_BOT_TOKEN"] == "env-token"
 
 
