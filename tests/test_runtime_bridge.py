@@ -1,10 +1,11 @@
 import asyncio
 import importlib
+import time
 from types import SimpleNamespace
 
 import pytest
 
-from easierlit import EasierlitApp, EasierlitClient, OutgoingCommand
+from easierlit import AppClosedError, EasierlitApp, EasierlitClient, IncomingMessage, OutgoingCommand
 from easierlit.runtime import RuntimeRegistry
 
 
@@ -28,6 +29,58 @@ def test_register_and_unregister_session_mapping():
     assert runtime.get_session_id_for_thread("thread-1") is None
 
 
+def test_dispatch_incoming_delegates_to_client():
+    runtime = RuntimeRegistry()
+    app = EasierlitApp(runtime=runtime)
+    captured = {"incoming": None}
+
+    def _on_message(_app: EasierlitApp, incoming: IncomingMessage) -> None:
+        captured["incoming"] = incoming
+
+    client = EasierlitClient(on_message=_on_message)
+    runtime.bind(client=client, app=app)
+    client.run(app)
+
+    incoming = IncomingMessage(
+        thread_id="thread-1",
+        session_id="session-1",
+        message_id="msg-1",
+        content="hello",
+        author="User",
+    )
+    runtime.dispatch_incoming(incoming)
+
+    for _ in range(20):
+        if captured["incoming"] is not None:
+            break
+        time.sleep(0.01)
+    assert captured["incoming"] is not None
+    assert captured["incoming"].message_id == "msg-1"
+
+    client.stop()
+
+
+def test_dispatch_incoming_raises_when_app_closed():
+    runtime = RuntimeRegistry()
+    app = EasierlitApp(runtime=runtime)
+    client = EasierlitClient(on_message=lambda _app, _incoming: None)
+    runtime.bind(client=client, app=app)
+    client.run(app)
+    app.close()
+
+    incoming = IncomingMessage(
+        thread_id="thread-1",
+        session_id="session-1",
+        message_id="msg-1",
+        content="hello",
+        author="User",
+    )
+    with pytest.raises(AppClosedError):
+        runtime.dispatch_incoming(incoming)
+
+    client.stop()
+
+
 def test_dispatcher_consumes_outgoing_queue():
     seen = []
 
@@ -37,7 +90,7 @@ def test_dispatcher_consumes_outgoing_queue():
 
     runtime = _SpyRuntime()
     app = EasierlitApp(runtime=runtime)
-    client = EasierlitClient(run_funcs=[lambda _app: None])
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None])
     runtime.bind(client=client, app=app)
 
     async def scenario():
@@ -58,7 +111,7 @@ def test_dispatcher_consumes_outgoing_queue():
 def test_apply_outgoing_command_sends_to_discord_channel():
     runtime = RuntimeRegistry()
     app = EasierlitApp(runtime=runtime)
-    client = EasierlitClient(run_funcs=[lambda _app: None])
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None])
     runtime.bind(client=client, app=app)
     runtime.register_discord_channel(thread_id="thread-1", channel_id=123)
 
@@ -103,7 +156,7 @@ def test_apply_outgoing_command_discord_also_persists_when_data_layer_exists():
         init_http_context_fn=lambda **_kwargs: None,
     )
     app = EasierlitApp(runtime=runtime)
-    client = EasierlitClient(run_funcs=[lambda _app: None])
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None])
     runtime.bind(client=client, app=app)
     runtime.register_discord_channel(thread_id="thread-1", channel_id=123)
 

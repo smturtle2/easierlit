@@ -20,8 +20,8 @@ It keeps the power of Chainlit while reducing the boilerplate for worker loops, 
 
 - Clear runtime split:
 - `EasierlitServer`: runs Chainlit in the main process.
-- `EasierlitClient`: runs your `run_funcs` in global thread workers (one thread per function).
-- `EasierlitApp`: queue bridge for inbound/outbound communication.
+- `EasierlitClient`: dispatches incoming messages to `on_message(app, incoming)` workers.
+- `EasierlitApp`: message/thread CRUD bridge for outgoing commands.
 - Production-oriented defaults:
 - headless server mode
 - sidebar default state `open`
@@ -39,8 +39,8 @@ It keeps the power of Chainlit while reducing the boilerplate for worker loops, 
 User UI
   -> Chainlit callbacks (on_message / on_chat_start / ...)
   -> Easierlit runtime bridge
-  -> EasierlitApp incoming queue
-  -> run_funcs[i](app) in workers (thread)
+  -> EasierlitClient incoming dispatcher
+  -> on_message(app, incoming) in per-message workers (thread)
   -> app.* APIs (message + thread CRUD)
   -> runtime dispatcher
   -> realtime session OR data-layer fallback
@@ -61,52 +61,43 @@ pip install -e ".[dev]"
 ## Quick Start (60 Seconds)
 
 ```python
-from easierlit import AppClosedError, EasierlitClient, EasierlitServer
+from easierlit import EasierlitClient, EasierlitServer
 
 
-def run_func(app):
-    while True:
-        try:
-            incoming = app.recv(timeout=1.0)
-        except TimeoutError:
-            continue
-        except AppClosedError:
-            break
-
-        app.add_message(
-            thread_id=incoming.thread_id,
-            content=f"Echo: {incoming.content}",
-            author="EchoBot",
-        )
+def on_message(app, incoming):
+    app.add_message(
+        thread_id=incoming.thread_id,
+        content=f"Echo: {incoming.content}",
+        author="EchoBot",
+    )
 
 
-client = EasierlitClient(run_funcs=[run_func])
+client = EasierlitClient(on_message=on_message)
 server = EasierlitServer(client=client)
 server.serve()  # blocking
 ```
 
-Async worker pattern:
+Optional background run_func pattern:
 
 ```python
-from easierlit import AppClosedError, EasierlitClient, EasierlitServer
+import time
+
+from easierlit import EasierlitClient, EasierlitServer
 
 
-async def run_func(app):
-    while True:
-        try:
-            incoming = await app.arecv()
-        except AppClosedError:
-            break
+def on_message(app, incoming):
+    app.add_message(incoming.thread_id, f"Echo: {incoming.content}", author="EchoBot")
 
-        app.add_message(
-            thread_id=incoming.thread_id,
-            content=f"Echo: {incoming.content}",
-            author="EchoBot",
-        )
+
+def run_func(app):
+    while not app.is_closed():
+        # Optional background worker; no inbound message polling.
+        time.sleep(0.2)
 
 
 client = EasierlitClient(
-    run_funcs=[run_func],
+    on_message=on_message,
+    run_funcs=[run_func],  # optional
     run_func_mode="auto",  # auto/sync/async
 )
 server = EasierlitServer(client=client)
@@ -151,10 +142,14 @@ EasierlitServer(
     discord=None,
 )
 
-EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
+EasierlitClient(
+    on_message,
+    run_funcs=None,
+    worker_mode="thread",
+    run_func_mode="auto",
+    max_message_workers=64,
+)
 
-EasierlitApp.recv(timeout=None)
-EasierlitApp.arecv(timeout=None)
 EasierlitApp.start_thread_task(thread_id)
 EasierlitApp.end_thread_task(thread_id)
 EasierlitApp.is_thread_task_running(thread_id) -> bool
@@ -264,14 +259,13 @@ Thread task-state APIs:
 Behavior highlights:
 
 - `app.add_message(...)` returns generated `message_id`.
-- `app.enqueue(...)` mirrors input as `user_message` (UI/data layer) and also feeds `app.recv()/app.arecv()`.
+- `app.enqueue(...)` mirrors input as `user_message` (UI/data layer) and dispatches to `on_message`.
 - `app.add_tool(...)` stores tool-call steps with tool name shown as step author/name.
 - `app.add_thought(...)` is the same tool-call path with fixed tool name `Reasoning`.
-- `app.start_thread_task(...)` marks one thread as working and enables internal input lock for that thread.
-- `app.end_thread_task(...)` clears working state and releases internal input lock for that thread.
+- `app.start_thread_task(...)` marks one thread as working (UI task indicator).
+- `app.end_thread_task(...)` clears working state (UI task indicator).
 - `app.is_thread_task_running(...)` returns current thread working state.
-- While `app.is_thread_task_running(thread_id)` is `True`, web input from `@cl.on_message` for that thread is silently ignored.
-- `app.enqueue(...)` is not blocked by thread task state.
+- Easierlit auto-manages thread task state around each `on_message` execution.
 - `app.get_messages(...)` returns thread metadata plus one ordered `messages` list.
 - `app.get_messages(...)` includes `user_message`/`assistant_message`/`system_message`/`tool` and excludes run-family steps.
 - `app.get_messages(...)` maps `thread["elements"]` into each message via `forId` aliases (`forId`/`for_id`/`stepId`/`step_id`).

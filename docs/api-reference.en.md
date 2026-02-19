@@ -70,24 +70,29 @@ May raise:
 
 ```python
 EasierlitClient(
-    run_funcs: list[Callable[[EasierlitApp], Any]],
+    on_message: Callable[[EasierlitApp, IncomingMessage], Any],
+    run_funcs: list[Callable[[EasierlitApp], Any]] | None = None,
     worker_mode: Literal["thread"] = "thread",
     run_func_mode: Literal["auto", "sync", "async"] = "auto",
+    max_message_workers: int = 64,
 )
 ```
 
 Parameters:
 
-- `run_funcs`: non-empty list of user worker entrypoints.
+- `on_message`: required incoming message handler, sync or async.
+- `run_funcs`: optional list of background worker entrypoints.
 - `worker_mode`: only `"thread"` is supported.
 - `run_func_mode`:
 - `"auto"`: execute sync or async based on returned object.
 - `"sync"`: requires non-awaitable return.
 - `"async"`: requires awaitable return.
+- `max_message_workers`: global maximum concurrent on_message workers.
 
 Raises:
 
-- `ValueError` for invalid `worker_mode`/`run_func_mode`, or invalid/empty `run_funcs`.
+- `ValueError` for invalid `worker_mode`/`run_func_mode`, invalid `run_funcs`, or invalid `max_message_workers`.
+- `TypeError` when `on_message` is not callable.
 - `TypeError` when any `run_funcs` item is not callable.
 
 ### 3.2 `EasierlitClient.run`
@@ -98,6 +103,9 @@ run(app: EasierlitApp) -> None
 
 Behavior:
 
+- Enables message dispatch via `dispatch_incoming(...)`.
+- Runs one daemon thread per incoming message.
+- Serializes by `thread_id` and executes different thread ids in parallel (up to `max_message_workers`).
 - Starts one daemon thread worker per `run_func`.
 - Invokes each `run_func(app)` against the same shared app.
 - For uncaught worker exceptions, records traceback and closes app (fail-fast).
@@ -116,6 +124,8 @@ stop(timeout: float = 5.0) -> None
 Behavior:
 
 - Closes app.
+- Stops scheduling new incoming messages and clears pending incoming dispatch buffers.
+- Does not wait for in-flight message workers.
 - Joins all worker threads up to `timeout` each.
 - Re-raises worker failure as `RunFuncExecutionError`.
 
@@ -137,28 +147,7 @@ peek_worker_error() -> str | None
 
 ## 4. EasierlitApp
 
-### 4.1 `EasierlitApp.recv`
-
-```python
-recv(timeout: float | None = None) -> IncomingMessage
-```
-
-Behavior:
-
-- Blocks until incoming user message exists.
-- Raises `TimeoutError` if timeout elapses.
-- Raises `AppClosedError` if app is already closed.
-
-### 4.2 `EasierlitApp.arecv`
-
-```python
-arecv(timeout: float | None = None) -> IncomingMessage
-```
-
-- Async variant of `recv`.
-- Same timeout/close semantics.
-
-### 4.3 `EasierlitApp.enqueue`
+### 4.1 `EasierlitApp.enqueue`
 
 ```python
 enqueue(
@@ -176,14 +165,14 @@ enqueue(
 Behavior:
 
 - Enqueues outgoing `add_message` command with `step_type="user_message"` for immediate UI/data-layer visibility.
-- Builds an `IncomingMessage` and enqueues it into app incoming queue.
+- Builds an `IncomingMessage` and dispatches it through runtime/client on_message workers.
 - Returns the enqueued `message_id`.
 - Uses generated UUID message id when `message_id` is omitted.
 - Raises `ValueError` when `thread_id`/`session_id`/`author` are blank.
 - Raises `ValueError` when provided `message_id` is blank.
 - Raises `AppClosedError` when app is already closed.
 
-### 4.4 `EasierlitApp.add_message`
+### 4.2 `EasierlitApp.add_message`
 
 ```python
 add_message(
@@ -202,7 +191,7 @@ Behavior:
 - Returns generated `message_id`.
 - Command is later applied by runtime dispatcher.
 
-### 4.5 `EasierlitApp.add_tool`
+### 4.3 `EasierlitApp.add_tool`
 
 ```python
 add_tool(
@@ -407,7 +396,6 @@ Behavior:
 - Collects existing step ids and applies immediate `delete` commands via runtime (realtime + data-layer fallback path).
 - Deletes the thread and recreates the same `thread_id`.
 - Restores only thread `name`; recreated thread `metadata` and `tags` are reset.
-- Removes pending incoming queue messages for that `thread_id`.
 - Automatically clears thread task state for that `thread_id`.
 
 Raises:
@@ -424,7 +412,6 @@ close() -> None
 Behavior:
 
 - Marks app closed.
-- Unblocks `recv/arecv` waiters.
 - Enqueues `close` outgoing command for dispatcher shutdown.
 
 ### 4.19 `EasierlitApp.is_closed`
@@ -445,13 +432,12 @@ is_thread_task_running(thread_id: str) -> bool
 
 Behavior:
 
-- `start_thread_task(...)` marks a thread as running and enables internal input lock for that thread.
-- `end_thread_task(...)` clears running state and releases internal input lock for that thread.
+- `start_thread_task(...)` marks a thread as running (UI task indicator).
+- `end_thread_task(...)` clears running state (UI task indicator).
 - `is_thread_task_running(...)` returns current running state for that thread.
 - Thread id must be a non-empty string for all three methods; blank values raise `ValueError`.
 - State model is simple: repeated `start_thread_task(thread_id)` calls still require only one `end_thread_task(thread_id)` to clear the state.
-- While thread task state is running, web input for that thread (`@cl.on_message`) is silently ignored.
-- `app.enqueue(...)` is not blocked by thread task state.
+- Easierlit auto-manages task state around each `on_message` execution.
 - Public `lock/unlock` methods are intentionally not exposed.
 
 ## 5. Config and Data Models
@@ -548,7 +534,7 @@ OutgoingCommand(
 
 | Exception | Typical trigger | Action |
 |---|---|---|
-| `AppClosedError` | `recv()` after app closed, or enqueue on closed app | Stop loop and exit worker gracefully |
+| `AppClosedError` | incoming dispatch or enqueue on closed app | Stop processing and restart server if needed |
 | `WorkerAlreadyRunningError` | `client.run()` called while worker alive | Call `client.stop()` first |
 | `RunFuncExecutionError` | Worker raised uncaught error | Inspect traceback, fix run_func logic |
 | `DataPersistenceNotEnabledError` | Thread CRUD without configured data layer | Enable persistence or register data layer |
@@ -558,9 +544,9 @@ OutgoingCommand(
 
 ## 7. Chainlit Message vs Tool-call Mapping
 
-- Incoming `app.recv/arecv` maps to user-message flow.
-- `app.enqueue(...)` mirrors input as `user_message` and also feeds the incoming queue.
-- `app.start_thread_task/end_thread_task` controls thread task state and internal input lock.
+- Incoming `on_message(..., incoming)` maps to user-message flow.
+- `app.enqueue(...)` mirrors input as `user_message` and dispatches to on_message.
+- `app.start_thread_task/end_thread_task` controls thread task-state indicator.
 - Outgoing `app.add_message` maps to assistant-message flow.
 - Outgoing `app.add_tool/update_tool` maps to tool-call flow with step name set from `tool_name`.
 - Outgoing `app.add_thought/update_thought` maps to tool-call flow with fixed step name `Reasoning`.
@@ -572,7 +558,7 @@ OutgoingCommand(
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
 | `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread`, `reset_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.start_thread_task`, `end_thread_task`, `is_thread_task_running` | No dedicated example yet (runtime/manual control APIs) |
-| `EasierlitApp.enqueue` | In-process integrations that mirror input as `user_message` and feed `app.recv()` |
+| `EasierlitApp.enqueue` | In-process integrations that mirror input as `user_message` and dispatch to `on_message` |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
 | Auth + persistence configs | `examples/custom_auth.py` |

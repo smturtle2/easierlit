@@ -76,7 +76,7 @@ def test_on_message_swallows_closed_app_with_worker_error(caplog):
     runtime = get_runtime()
     app = EasierlitApp()
     app.close()
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     runtime.bind(client=client, app=app)
     client._record_worker_error("Traceback (most recent call last):\nRuntimeError: boom")
 
@@ -98,7 +98,7 @@ def test_on_message_raises_when_closed_without_worker_error():
     runtime = get_runtime()
     app = EasierlitApp()
     app.close()
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     runtime.bind(client=client, app=app)
 
     fake_session = SimpleNamespace(thread_id="thread-1", id="session-1")
@@ -110,7 +110,7 @@ def test_on_message_raises_when_closed_without_worker_error():
 def test_on_app_shutdown_logs_summary_without_traceback(caplog):
     runtime = get_runtime()
     app = EasierlitApp()
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     runtime.bind(client=client, app=app)
 
     worker_traceback = (
@@ -139,7 +139,7 @@ def test_on_app_shutdown_logs_summary_without_traceback(caplog):
 def test_on_message_registers_discord_channel():
     runtime = get_runtime()
     app = EasierlitApp()
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     runtime.bind(client=client, app=app)
 
     fake_session = SimpleNamespace(thread_id="thread-1", id="session-1", client_type="discord")
@@ -169,7 +169,7 @@ def test_on_message_registers_discord_channel():
 def test_on_message_does_not_register_session_for_discord_client():
     runtime = get_runtime()
     app = EasierlitApp()
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     runtime.bind(client=client, app=app)
 
     fake_session = SimpleNamespace(thread_id="thread-1", id="session-1", client_type="discord")
@@ -197,7 +197,7 @@ def test_on_message_does_not_register_session_for_discord_client():
 def test_on_message_registers_session_for_non_discord_client():
     runtime = get_runtime()
     app = EasierlitApp()
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     runtime.bind(client=client, app=app)
 
     fake_session = SimpleNamespace(thread_id="thread-1", id="session-1", client_type="webapp")
@@ -219,42 +219,74 @@ def test_on_message_registers_session_for_non_discord_client():
     assert calls == [("thread-1", "session-1")]
 
 
-def test_on_message_ignores_when_thread_task_is_running():
+def test_on_message_dispatches_even_when_thread_task_is_running():
     runtime = get_runtime()
     app = EasierlitApp()
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(
+        on_message=lambda _app, _incoming: None,
+        run_funcs=[lambda _app: None],
+        worker_mode="thread",
+    )
     runtime.bind(client=client, app=app)
     app.start_thread_task("thread-1")
 
+    captured = {"count": 0, "thread_id": None}
+    original_dispatch_incoming = runtime.dispatch_incoming
+
+    def fake_dispatch_incoming(incoming):
+        captured["count"] += 1
+        captured["thread_id"] = incoming.thread_id
+
+    runtime.dispatch_incoming = fake_dispatch_incoming
+
     fake_session = SimpleNamespace(thread_id="thread-1", id="session-1", client_type="webapp")
-    with _swap_attr(chainlit_entry.cl, "context", SimpleNamespace(session=fake_session)):
-        asyncio.run(chainlit_entry._on_message(_sample_message()))
+    try:
+        with _swap_attr(chainlit_entry.cl, "context", SimpleNamespace(session=fake_session)):
+            asyncio.run(chainlit_entry._on_message(_sample_message()))
+    finally:
+        runtime.dispatch_incoming = original_dispatch_incoming
 
-    with pytest.raises(TimeoutError):
-        app.recv(timeout=0.05)
+    assert captured["count"] == 1
+    assert captured["thread_id"] == "thread-1"
 
 
-def test_on_message_enqueues_incoming_elements():
+def test_on_message_dispatches_incoming_elements():
     runtime = get_runtime()
     app = EasierlitApp()
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(
+        on_message=lambda _app, _incoming: None,
+        run_funcs=[lambda _app: None],
+        worker_mode="thread",
+    )
     runtime.bind(client=client, app=app)
+
+    captured = {"incoming": None}
+    original_dispatch_incoming = runtime.dispatch_incoming
+
+    def fake_dispatch_incoming(incoming):
+        captured["incoming"] = incoming
+
+    runtime.dispatch_incoming = fake_dispatch_incoming
 
     fake_session = SimpleNamespace(thread_id="thread-1", id="session-1", client_type="webapp")
     message = _sample_message()
     message.elements = [{"id": "el-1", "path": "/tmp/random.jpg"}]
 
-    with _swap_attr(chainlit_entry.cl, "context", SimpleNamespace(session=fake_session)):
-        asyncio.run(chainlit_entry._on_message(message))
+    try:
+        with _swap_attr(chainlit_entry.cl, "context", SimpleNamespace(session=fake_session)):
+            asyncio.run(chainlit_entry._on_message(message))
+    finally:
+        runtime.dispatch_incoming = original_dispatch_incoming
 
-    incoming = app.recv(timeout=1.0)
+    incoming = captured["incoming"]
+    assert incoming is not None
     assert incoming.elements == [{"id": "el-1", "path": "/tmp/random.jpg"}]
 
 
 def test_start_and_stop_discord_bridge_lifecycle():
     runtime = get_runtime()
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread"),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread"),
         app=EasierlitApp(),
         discord_token="discord-token",
     )
@@ -290,7 +322,7 @@ def test_on_app_startup_runs_local_storage_preflight_for_default_data_layer(
     runtime = get_runtime()
     runtime.unbind()
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread"),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread"),
         app=EasierlitApp(),
     )
 
@@ -335,7 +367,7 @@ def test_local_storage_route_serves_file_without_public_mount(tmp_path):
     storage_provider = _resolve_local_storage_provider(persistence)
 
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread"),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread"),
         app=EasierlitApp(),
         persistence=persistence,
     )
@@ -360,7 +392,7 @@ def test_local_storage_route_missing_file_returns_404_not_spa_html(tmp_path):
         local_storage_dir=tmp_path / "outside",
     )
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread"),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread"),
         app=EasierlitApp(),
         persistence=persistence,
     )
@@ -387,7 +419,7 @@ def test_local_storage_route_resolves_tilde_local_storage_dir(tmp_path, monkeypa
     )
 
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread"),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread"),
         app=EasierlitApp(),
         persistence=persistence,
     )
@@ -418,7 +450,7 @@ def test_local_storage_route_uses_runtime_persistence_provider_only(tmp_path, mo
     )
     persistence_provider = _resolve_local_storage_provider(persistence)
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread"),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread"),
         app=EasierlitApp(),
         persistence=persistence,
     )
@@ -450,7 +482,7 @@ def test_local_storage_route_uses_latest_runtime_persistence_provider_after_rebi
     )
     first_provider = _resolve_local_storage_provider(first_persistence)
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread"),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread"),
         app=EasierlitApp(),
         persistence=first_persistence,
     )
@@ -473,7 +505,7 @@ def test_local_storage_route_uses_latest_runtime_persistence_provider_after_rebi
     second_provider = _resolve_local_storage_provider(second_persistence)
     runtime.unbind()
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread"),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread"),
         app=EasierlitApp(),
         persistence=second_persistence,
     )
@@ -531,7 +563,7 @@ def test_default_sqlite_data_layer_get_thread_refreshes_element_url_from_object_
 
     db_path = tmp_path / "refresh-thread-url.db"
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread"),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread"),
         app=EasierlitApp(),
         persistence=EasierlitPersistenceConfig(enabled=True, sqlite_path=str(db_path)),
     )

@@ -70,24 +70,29 @@ serve() -> None
 
 ```python
 EasierlitClient(
-    run_funcs: list[Callable[[EasierlitApp], Any]],
+    on_message: Callable[[EasierlitApp, IncomingMessage], Any],
+    run_funcs: list[Callable[[EasierlitApp], Any]] | None = None,
     worker_mode: Literal["thread"] = "thread",
     run_func_mode: Literal["auto", "sync", "async"] = "auto",
+    max_message_workers: int = 64,
 )
 ```
 
 파라미터:
 
-- `run_funcs`: 비어 있지 않은 사용자 워커 엔트리 함수 리스트
+- `on_message`: 필수 입력 메시지 핸들러(sync/async 지원)
+- `run_funcs`: 선택적 백그라운드 워커 엔트리 함수 리스트
 - `worker_mode`: `"thread"`만 허용
 - `run_func_mode`:
 - `"auto"`: 반환값 기준으로 sync/async 자동 처리
 - `"sync"`: awaitable 반환 금지
 - `"async"`: awaitable 반환 필수
+- `max_message_workers`: on_message 전역 동시 실행 상한
 
 예외:
 
-- `worker_mode`/`run_func_mode`가 유효하지 않거나 `run_funcs`가 비정상이면 `ValueError`
+- `worker_mode`/`run_func_mode`/`run_funcs`/`max_message_workers`가 비정상이면 `ValueError`
+- `on_message`가 callable이 아니면 `TypeError`
 - `run_funcs` 항목 중 callable이 아닌 값이 있으면 `TypeError`
 
 ### 3.2 `EasierlitClient.run`
@@ -98,6 +103,9 @@ run(app: EasierlitApp) -> None
 
 동작:
 
+- `dispatch_incoming(...)` 기반 입력 디스패치 활성화
+- 입력마다 daemon thread 1개로 on_message 실행
+- 같은 `thread_id`는 직렬, 다른 `thread_id`는 `max_message_workers` 범위 내 병렬 실행
 - `run_func`마다 daemon thread 워커 1개씩 시작
 - 동일한 app 인스턴스로 각 `run_func(app)` 실행
 - 처리되지 않은 워커 예외 traceback 저장 후 app 종료(fail-fast)
@@ -116,6 +124,8 @@ stop(timeout: float = 5.0) -> None
 동작:
 
 - app 종료
+- 신규 incoming 스케줄링 중단 + pending incoming 버퍼 제거
+- in-flight 메시지 워커는 기다리지 않음
 - 모든 워커 스레드 join (`timeout` 각각 적용)
 - 워커 실패가 있으면 `RunFuncExecutionError`로 재전파
 
@@ -137,28 +147,7 @@ peek_worker_error() -> str | None
 
 ## 4. EasierlitApp
 
-### 4.1 `EasierlitApp.recv`
-
-```python
-recv(timeout: float | None = None) -> IncomingMessage
-```
-
-동작:
-
-- incoming 메시지를 blocking 수신
-- timeout 초과 시 `TimeoutError`
-- app이 닫힌 상태면 `AppClosedError`
-
-### 4.2 `EasierlitApp.arecv`
-
-```python
-arecv(timeout: float | None = None) -> IncomingMessage
-```
-
-- `recv`의 async 버전
-- timeout/close 동작은 동일
-
-### 4.3 `EasierlitApp.enqueue`
+### 4.1 `EasierlitApp.enqueue`
 
 ```python
 enqueue(
@@ -176,14 +165,14 @@ enqueue(
 동작:
 
 - 즉시 UI/data layer 반영을 위해 `step_type="user_message"`인 `add_message` outgoing command를 먼저 큐에 적재
-- `IncomingMessage`를 생성해 app incoming queue에 적재
+- `IncomingMessage`를 생성해 runtime/client on_message 워커로 디스패치
 - 적재된 `message_id` 반환
 - `message_id` 생략 시 UUID 기반 자동 생성
 - `thread_id`/`session_id`/`author`가 공백 문자열이면 `ValueError`
 - `message_id`를 명시했는데 공백 문자열이면 `ValueError`
 - app이 이미 닫혀 있으면 `AppClosedError`
 
-### 4.4 `EasierlitApp.add_message`
+### 4.2 `EasierlitApp.add_message`
 
 ```python
 add_message(
@@ -202,7 +191,7 @@ add_message(
 - 생성된 `message_id` 반환
 - 실제 반영은 runtime dispatcher에서 수행
 
-### 4.5 `EasierlitApp.add_tool`
+### 4.3 `EasierlitApp.add_tool`
 
 ```python
 add_tool(
@@ -407,7 +396,6 @@ reset_thread(thread_id: str) -> None
 - 기존 step id를 수집해 runtime 경로(realtime + data-layer fallback)로 `delete` command를 즉시 적용
 - thread를 삭제한 뒤 동일한 `thread_id`로 재생성
 - 재생성 시 `name`만 복원하고 `metadata`/`tags`는 초기화
-- 해당 `thread_id`의 incoming queue pending 메시지를 제거
 - 해당 `thread_id`의 thread 작업 상태를 자동 해제
 
 예외:
@@ -424,7 +412,6 @@ close() -> None
 동작:
 
 - app를 closed 상태로 전환
-- 대기 중 `recv/arecv`를 해제
 - dispatcher 종료를 위한 `close` command 큐 적재
 
 ### 4.19 `EasierlitApp.is_closed`
@@ -445,13 +432,12 @@ is_thread_task_running(thread_id: str) -> bool
 
 동작:
 
-- `start_thread_task(...)`는 특정 thread를 작업 중으로 표시하고 해당 thread 내부 입력 잠금을 활성화
-- `end_thread_task(...)`는 작업 중 상태를 해제하고 내부 입력 잠금을 해제
+- `start_thread_task(...)`는 특정 thread를 작업 중(UI indicator)으로 표시
+- `end_thread_task(...)`는 작업 중(UI indicator) 상태를 해제
 - `is_thread_task_running(...)`는 해당 thread의 작업 중 상태를 반환
 - 세 메서드 모두 `thread_id`는 비어 있지 않은 문자열이어야 하며 공백 문자열은 `ValueError`
 - 상태 모델은 단순 모드이며 `start_thread_task(thread_id)`를 여러 번 호출해도 `end_thread_task(thread_id)` 1회면 상태 해제
-- thread 작업 중 상태인 동안 해당 thread의 `@cl.on_message` 웹 입력은 조용히 무시
-- `app.enqueue(...)` 경로는 thread 작업 상태의 영향을 받지 않음
+- Easierlit이 각 `on_message` 실행 구간의 task state를 자동 관리
 - 공개 `lock/unlock` 메서드는 제공하지 않음
 
 ## 5. 설정 및 데이터 모델
@@ -548,7 +534,7 @@ OutgoingCommand(
 
 | 예외 | 대표 트리거 | 대응 |
 |---|---|---|
-| `AppClosedError` | app 종료 후 `recv()` 호출, 종료 후 enqueue 시도 | 워커 루프 종료 처리 |
+| `AppClosedError` | app 종료 후 incoming dispatch 또는 enqueue 시도 | 처리 중단 후 필요 시 서버 재시작 |
 | `WorkerAlreadyRunningError` | 실행 중인 워커에서 `client.run()` 재호출 | 먼저 `client.stop()` |
 | `RunFuncExecutionError` | `run_func` 미처리 예외 | traceback 확인 후 run_func 로직 수정 |
 | `DataPersistenceNotEnabledError` | data layer 없는 상태에서 thread CRUD 호출 | persistence/data layer 설정 |
@@ -558,9 +544,9 @@ OutgoingCommand(
 
 ## 7. Chainlit Message vs Tool-call 매핑
 
-- `app.recv/arecv` 입력은 user-message 흐름
-- `app.enqueue(...)`는 입력을 `user_message`로 미러링하고 incoming queue에도 주입
-- `app.start_thread_task/end_thread_task`는 thread 작업 상태와 내부 입력 잠금을 제어
+- `on_message(..., incoming)` 입력은 user-message 흐름
+- `app.enqueue(...)`는 입력을 `user_message`로 미러링하고 on_message로 디스패치
+- `app.start_thread_task/end_thread_task`는 thread 작업 상태 indicator를 제어
 - `app.add_message` 출력은 assistant-message 흐름
 - `app.add_tool/update_tool` 출력은 tool-call 흐름이며 step name은 `tool_name` 사용
 - `app.add_thought/update_thought` 출력은 tool-call 흐름이며 step name은 `Reasoning` 고정
@@ -572,7 +558,7 @@ OutgoingCommand(
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
 | `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread`, `reset_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.start_thread_task`, `end_thread_task`, `is_thread_task_running` | 전용 예제 없음 (런타임/수동 제어 API) |
-| `EasierlitApp.enqueue` | 외부 입력을 `user_message`로 미러링하고 `app.recv()`로 주입하는 in-process 연동 |
+| `EasierlitApp.enqueue` | 외부 입력을 `user_message`로 미러링하고 `on_message`로 디스패치하는 in-process 연동 |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
 | 인증/영속성 설정 | `examples/custom_auth.py` |

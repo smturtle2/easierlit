@@ -1,25 +1,19 @@
-import asyncio
-
 import pytest
 
-from easierlit import AppClosedError, EasierlitApp, IncomingMessage
+from easierlit import AppClosedError, EasierlitApp
 
 
-def test_recv_add_update_delete_flow():
+class _CapturingRuntime:
+    def __init__(self):
+        self.incoming = []
+
+    def dispatch_incoming(self, message):
+        self.incoming.append(message)
+
+
+
+def test_add_update_delete_flow():
     app = EasierlitApp()
-
-    incoming = IncomingMessage(
-        thread_id="thread-1",
-        session_id="session-1",
-        message_id="msg-1",
-        content="hello",
-        author="User",
-    )
-    app._enqueue_incoming(incoming)
-
-    received = app.recv(timeout=1.0)
-    assert received.thread_id == "thread-1"
-    assert received.content == "hello"
 
     message_id = app.add_message(thread_id="thread-1", content="world", author="Bot")
     add_cmd = app._pop_outgoing(timeout=1.0)
@@ -39,6 +33,7 @@ def test_recv_add_update_delete_flow():
     assert delete_cmd.message_id == message_id
 
 
+
 def test_add_message_enqueues_elements():
     app = EasierlitApp()
     element = object()
@@ -54,6 +49,7 @@ def test_add_message_enqueues_elements():
     assert add_cmd.command == "add_message"
     assert add_cmd.message_id == message_id
     assert add_cmd.elements == [element]
+
 
 
 def test_tool_and_thought_enqueue_flow():
@@ -104,6 +100,7 @@ def test_tool_and_thought_enqueue_flow():
     assert thought_update_cmd.content == "Now I can synthesize the final answer."
 
 
+
 def test_update_tool_enqueues_elements():
     app = EasierlitApp()
     tool_message_id = app.add_tool(
@@ -128,58 +125,13 @@ def test_update_tool_enqueues_elements():
     assert tool_update_cmd.elements == [element]
 
 
-def test_recv_timeout_and_close():
-    app = EasierlitApp()
 
-    try:
-        app.recv(timeout=0.05)
-        assert False, "recv() should timeout when no message exists."
-    except TimeoutError:
-        pass
-
-    app.close()
-
-    try:
-        app.recv(timeout=0.05)
-        assert False, "recv() should fail once app is closed."
-    except AppClosedError:
-        pass
-
-
-def test_arecv_flow():
-    app = EasierlitApp()
-    incoming = IncomingMessage(
-        thread_id="thread-2",
-        session_id="session-2",
-        message_id="msg-2",
-        content="hello async",
-        author="User",
-    )
-    app._enqueue_incoming(incoming)
-
-    received = asyncio.run(app.arecv(timeout=1.0))
-    assert received.thread_id == "thread-2"
-    assert received.content == "hello async"
-
-
-def test_arecv_timeout_and_close():
-    app = EasierlitApp()
-
-    with pytest.raises(TimeoutError):
-        asyncio.run(app.arecv(timeout=0.05))
-
-    app.close()
-
-    with pytest.raises(AppClosedError):
-        asyncio.run(app.arecv(timeout=0.05))
-
-
-def test_enqueue_default_values_and_recv_flow():
-    app = EasierlitApp()
+def test_enqueue_default_values_dispatches_incoming_and_enqueues_user_step():
+    runtime = _CapturingRuntime()
+    app = EasierlitApp(runtime=runtime)
 
     message_id = app.enqueue(thread_id="thread-3", content="from external")
     enqueue_cmd = app._pop_outgoing(timeout=1.0)
-    incoming = app.recv(timeout=1.0)
 
     assert enqueue_cmd.command == "add_message"
     assert enqueue_cmd.thread_id == "thread-3"
@@ -188,17 +140,19 @@ def test_enqueue_default_values_and_recv_flow():
     assert enqueue_cmd.author == "User"
     assert enqueue_cmd.step_type == "user_message"
 
+    assert len(runtime.incoming) == 1
+    incoming = runtime.incoming[0]
     assert incoming.thread_id == "thread-3"
     assert incoming.content == "from external"
     assert incoming.session_id == "external"
     assert incoming.author == "User"
     assert incoming.message_id == message_id
-    assert isinstance(message_id, str)
-    assert message_id
 
 
-def test_enqueue_with_explicit_values_returns_same_message_id():
-    app = EasierlitApp()
+
+def test_enqueue_with_explicit_values_returns_same_message_id_and_dispatches():
+    runtime = _CapturingRuntime()
+    app = EasierlitApp(runtime=runtime)
 
     message_id = app.enqueue(
         thread_id="thread-4",
@@ -211,7 +165,6 @@ def test_enqueue_with_explicit_values_returns_same_message_id():
         created_at="2026-02-18T10:00:00Z",
     )
     enqueue_cmd = app._pop_outgoing(timeout=1.0)
-    incoming = app.recv(timeout=1.0)
 
     assert message_id == "msg-explicit"
     assert enqueue_cmd.command == "add_message"
@@ -222,12 +175,16 @@ def test_enqueue_with_explicit_values_returns_same_message_id():
     assert enqueue_cmd.content == "payload"
     assert enqueue_cmd.metadata == {"source": "integration"}
     assert enqueue_cmd.elements == [{"id": "el-1"}]
+
+    assert len(runtime.incoming) == 1
+    incoming = runtime.incoming[0]
     assert incoming.message_id == "msg-explicit"
     assert incoming.session_id == "session-x"
     assert incoming.author == "Webhook"
     assert incoming.metadata == {"source": "integration"}
     assert incoming.elements == [{"id": "el-1"}]
     assert incoming.created_at == "2026-02-18T10:00:00Z"
+
 
 
 def test_enqueue_rejects_blank_required_fields():
@@ -243,12 +200,14 @@ def test_enqueue_rejects_blank_required_fields():
         app.enqueue(thread_id="thread-1", content="x", message_id=" ")
 
 
+
 def test_enqueue_raises_app_closed_error_when_app_is_closed():
     app = EasierlitApp()
     app.close()
 
     with pytest.raises(AppClosedError):
         app.enqueue(thread_id="thread-1", content="x")
+
 
 
 def test_thread_task_state_api_flow():
@@ -263,6 +222,7 @@ def test_thread_task_state_api_flow():
     assert app.is_thread_task_running("thread-1") is False
 
 
+
 def test_thread_task_state_uses_simple_mode_for_repeated_start():
     app = EasierlitApp()
 
@@ -272,6 +232,7 @@ def test_thread_task_state_uses_simple_mode_for_repeated_start():
 
     app.end_thread_task("thread-1")
     assert app.is_thread_task_running("thread-1") is False
+
 
 
 def test_thread_task_state_validates_non_empty_thread_id():

@@ -384,9 +384,6 @@ async def _on_message(message: cl.Message) -> None:
     session = cl.context.session
     _register_non_discord_session_for_current_session()
     _register_discord_channel_for_current_session()
-    app = RUNTIME.get_app()
-    if app is not None and app.is_thread_task_running(session.thread_id):
-        return
 
     incoming = IncomingMessage(
         thread_id=session.thread_id,
@@ -399,7 +396,7 @@ async def _on_message(message: cl.Message) -> None:
         metadata=message.metadata or {},
     )
     try:
-        RUNTIME.enqueue_incoming(incoming)
+        RUNTIME.dispatch_incoming(incoming)
     except AppClosedError:
         client = RUNTIME.get_client()
         worker_error = client.peek_worker_error() if client is not None else None

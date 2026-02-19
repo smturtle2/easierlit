@@ -1,31 +1,21 @@
 from easierlit import (
-    AppClosedError,
     EasierlitAuthConfig,
     EasierlitClient,
-    EasierlitApp,
     EasierlitPersistenceConfig,
     EasierlitServer,
 )
 
 
-def run_func(app: EasierlitApp):
-    while True:
-        try:
-            incoming = app.recv(timeout=1.0)
-        except TimeoutError:
-            continue
-        except AppClosedError:
-            break
-
-        app.add_message(
-            thread_id=incoming.thread_id,
-            content=f"Authenticated echo: {incoming.content}",
-            author="SecureBot",
-        )
+def on_message(app, incoming):
+    app.add_message(
+        thread_id=incoming.thread_id,
+        content=f"Authenticated echo: {incoming.content}",
+        author="SecureBot",
+    )
 
 
 if __name__ == "__main__":
-    client = EasierlitClient(run_funcs=[run_func], worker_mode="thread")
+    client = EasierlitClient(on_message=on_message)
     auth = EasierlitAuthConfig(
         username="admin",
         password="admin",

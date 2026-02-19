@@ -45,7 +45,7 @@ def _build_runtime(tmp_path: Path, data_layer: _FakeSQLAlchemyLikeDataLayer) -> 
         local_storage_dir=tmp_path / "images",
     )
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread"),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread"),
         app=EasierlitApp(runtime=runtime),
         persistence=persistence,
     )

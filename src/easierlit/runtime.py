@@ -19,7 +19,7 @@ from chainlit.data import get_data_layer
 from chainlit.utils import utc_now
 
 from .discord_outgoing import send_discord_command, supports_discord_command
-from .errors import ThreadSessionNotActiveError
+from .errors import AppClosedError, ThreadSessionNotActiveError
 from .models import IncomingMessage, OutgoingCommand
 from .storage.local import LOCAL_STORAGE_ROUTE_PREFIX
 
@@ -184,11 +184,15 @@ class RuntimeRegistry:
         with self._lock:
             return self._thread_to_discord_channel.get(thread_id)
 
-    def enqueue_incoming(self, message: IncomingMessage) -> None:
+    def dispatch_incoming(self, message: IncomingMessage) -> None:
         app = self._app
-        if app is None:
+        client = self._client
+        if app is None or client is None:
+            LOGGER.warning("Skipping incoming dispatch because runtime is not bound.")
             return
-        app._enqueue_incoming(message)
+        if app.is_closed():
+            raise AppClosedError("Cannot dispatch incoming message to a closed app.")
+        client.dispatch_incoming(message)
 
     async def start_dispatcher(self) -> None:
         if self._app is None:

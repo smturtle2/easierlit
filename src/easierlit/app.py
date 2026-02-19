@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
 from pathlib import Path
@@ -21,10 +20,11 @@ from .runtime import get_runtime
 
 class EasierlitApp:
     """
-    Communication bridge between Chainlit callbacks and user run_func.
+    Communication bridge between Chainlit callbacks and user handlers.
 
-    Easierlit runs with a single thread worker. This object is the primary API
-    surface for worker message and thread CRUD operations.
+    This object is the primary API surface for message and thread CRUD
+    operations. Incoming user messages are dispatched through EasierlitClient
+    on_message workers.
     """
 
     _THOUGHT_TOOL_NAME = "Reasoning"
@@ -44,7 +44,6 @@ class EasierlitApp:
         data_layer_getter: Callable[[], Any | None] = get_data_layer,
         uuid_factory: Callable[[], Any] = uuid4,
     ):
-        self._incoming_queue: queue.Queue[IncomingMessage | None] = queue.Queue()
         self._outgoing_queue: queue.Queue[OutgoingCommand] = queue.Queue()
         self._closed = threading.Event()
         self._running_thread_tasks: set[str] = set()
@@ -52,26 +51,6 @@ class EasierlitApp:
         self._runtime = runtime if runtime is not None else get_runtime()
         self._data_layer_getter = data_layer_getter
         self._uuid_factory = uuid_factory
-
-    def recv(self, timeout: float | None = None) -> IncomingMessage:
-        if self._closed.is_set():
-            raise AppClosedError("EasierlitApp is closed.")
-
-        try:
-            if timeout is None:
-                item = self._incoming_queue.get()
-            else:
-                item = self._incoming_queue.get(timeout=timeout)
-        except queue.Empty as exc:
-            raise TimeoutError("Timed out waiting for an incoming message.") from exc
-
-        if item is None:
-            raise AppClosedError("EasierlitApp is closed.")
-
-        return item
-
-    async def arecv(self, timeout: float | None = None) -> IncomingMessage:
-        return await asyncio.to_thread(self.recv, timeout)
 
     def start_thread_task(self, thread_id: str) -> None:
         resolved_thread_id = self._require_non_empty_thread_id(thread_id)
@@ -151,7 +130,7 @@ class EasierlitApp:
             created_at=created_at,
             metadata=resolved_metadata,
         )
-        self._enqueue_incoming(incoming)
+        self._runtime.dispatch_incoming(incoming)
         return resolved_message_id
 
     def add_message(
@@ -448,7 +427,6 @@ class EasierlitApp:
                 tags=None,
                 require_existing=False,
             )
-            self._clear_pending_incoming_for_thread(thread_id)
         finally:
             self._clear_thread_task_state(thread_id)
 
@@ -457,16 +435,10 @@ class EasierlitApp:
             return
 
         self._closed.set()
-        self._incoming_queue.put_nowait(None)
         self._outgoing_queue.put_nowait(OutgoingCommand(command="close"))
 
     def is_closed(self) -> bool:
         return self._closed.is_set()
-
-    def _enqueue_incoming(self, message: IncomingMessage) -> None:
-        if self._closed.is_set():
-            raise AppClosedError("Cannot enqueue incoming message to a closed app.")
-        self._incoming_queue.put_nowait(message)
 
     def _pop_outgoing(self, timeout: float | None = 0.1) -> OutgoingCommand:
         if timeout is None:
@@ -567,26 +539,6 @@ class EasierlitApp:
                     )
                 )
             )
-
-    def _clear_pending_incoming_for_thread(self, thread_id: str) -> None:
-        retained_items: list[IncomingMessage | None] = []
-        while True:
-            try:
-                item = self._incoming_queue.get_nowait()
-            except queue.Empty:
-                break
-
-            if item is None:
-                retained_items.append(item)
-                continue
-
-            if item.thread_id == thread_id:
-                continue
-
-            retained_items.append(item)
-
-        for item in retained_items:
-            self._incoming_queue.put_nowait(item)
 
     def _get_data_layer_or_raise(self):
         data_layer = self._data_layer_getter()

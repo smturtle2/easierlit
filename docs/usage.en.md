@@ -16,39 +16,31 @@ For exact method-level contracts (signature, raises, failure modes), see:
 Easierlit has three core parts:
 
 - `EasierlitServer`: starts Chainlit in the main process.
-- `EasierlitClient`: starts your `run_funcs` in global thread workers (one thread per function).
-- `EasierlitApp`: queue bridge for inbound user messages and outbound commands.
+- `EasierlitClient`: dispatches incoming messages to `on_message(app, incoming)` workers.
+- `EasierlitApp`: message/thread CRUD bridge for outbound commands.
 
 High-level flow:
 
 1. `server.serve()` binds runtime and starts Chainlit.
 2. Chainlit callback `on_message` converts input into `IncomingMessage`.
-3. Worker calls `app.recv()` or `await app.arecv()` and handles message.
-4. Worker returns output via `app.*` APIs (message + thread CRUD).
+3. Runtime dispatches input to `client.on_message(app, incoming)` in message workers.
+4. Handler returns output via `app.*` APIs (message + thread CRUD).
 
 ## 3. Canonical Bootstrapping Pattern
 
 ```python
-from easierlit import AppClosedError, EasierlitClient, EasierlitServer
+from easierlit import EasierlitClient, EasierlitServer
 
 
-def run_func(app):
-    while True:
-        try:
-            incoming = app.recv(timeout=1.0)
-        except TimeoutError:
-            continue
-        except AppClosedError:
-            break
-
-        app.add_message(
-            thread_id=incoming.thread_id,
-            content=f"Echo: {incoming.content}",
-            author="EchoBot",
-        )
+def on_message(app, incoming):
+    app.add_message(
+        thread_id=incoming.thread_id,
+        content=f"Echo: {incoming.content}",
+        author="EchoBot",
+    )
 
 
-client = EasierlitClient(run_funcs=[run_func])
+client = EasierlitClient(on_message=on_message)
 server = EasierlitServer(client=client)
 server.serve()
 ```
@@ -57,7 +49,8 @@ Notes:
 
 - `serve()` is blocking.
 - `worker_mode` supports only `"thread"`.
-- Each `run_func` in `run_funcs` can be sync or async.
+- `on_message` can be sync or async.
+- `run_funcs` is optional for background tasks.
 - `run_func_mode="auto"` detects sync/async behavior for each function.
 
 ## 4. Public API Signatures
@@ -75,10 +68,14 @@ EasierlitServer(
     discord=None,
 )
 
-EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
+EasierlitClient(
+    on_message,
+    run_funcs=None,
+    worker_mode="thread",
+    run_func_mode="auto",
+    max_message_workers=64,
+)
 
-EasierlitApp.recv(timeout=None)
-EasierlitApp.arecv(timeout=None)
 EasierlitApp.start_thread_task(thread_id)
 EasierlitApp.end_thread_task(thread_id)
 EasierlitApp.is_thread_task_running(thread_id) -> bool
@@ -199,27 +196,31 @@ Thread History visibility follows Chainlit policy:
 - `requireLogin=True`
 - `dataPersistence=True`
 
-## 7. run_func Pattern and Error Handling
+## 7. on_message Pattern and Error Handling
 
 Recommended structure:
 
-1. Sync `run_func`: long-running loop with `app.recv(timeout=...)`.
-2. Async `run_func`: long-running loop with `await app.arecv()` (or `await app.arecv(timeout=...)` when needed).
-3. Handle `TimeoutError` as idle tick when using timeout.
-4. Break on `AppClosedError`.
-5. Keep per-command exceptions contextual for logs.
+1. Implement `on_message(app, incoming)` as your primary input handler.
+2. Keep handler idempotent and thread-safe for concurrent chats.
+3. Use `app.*` APIs for all outputs and CRUD operations.
+4. Keep per-command exceptions contextual for logs.
 
-If `run_func` raises uncaught exception:
+If `on_message` raises uncaught exception:
+
+- Easierlit logs traceback.
+- Easierlit sends a short error notice message in the same thread.
+- Server stays alive and processes next messages.
+
+If `run_func` raises uncaught exception (background workers):
 
 - Easierlit logs traceback.
 - Easierlit triggers server shutdown.
-- Further incoming enqueue attempts are suppressed with shutdown messaging.
+- Further incoming dispatch attempts are suppressed with shutdown messaging.
 
 External in-process input:
 
-- `app.enqueue(...)` mirrors input as `user_message` for UI/data-layer visibility and also feeds `app.recv()/app.arecv()`.
+- `app.enqueue(...)` mirrors input as `user_message` for UI/data-layer visibility and dispatches to `on_message`.
 - Typical usage is webhook/internal integration code that shares the same process.
-- `app.enqueue(...)` is not blocked by thread task state.
 
 Thread task-state API:
 
@@ -229,9 +230,9 @@ Thread task-state API:
 
 Behavior:
 
-- `start_thread_task(...)` marks a thread as working and enables internal input lock for that thread.
-- `end_thread_task(...)` clears working state and releases internal input lock for that thread.
-- While a thread is in working state, web input from `@cl.on_message` for that thread is silently ignored.
+- `start_thread_task(...)` marks a thread as working (UI task indicator).
+- `end_thread_task(...)` clears working state (UI task indicator).
+- Easierlit auto-manages task state for each `on_message` execution.
 - Public `lock/unlock` methods are intentionally not exposed.
 
 ## 8. Thread CRUD in App
@@ -251,7 +252,7 @@ Behavior details:
 - Data layer is required for thread CRUD.
 - `new_thread` auto-generates a unique thread id and returns it.
 - `update_thread` updates only when target thread already exists.
-- `reset_thread` deletes all thread messages, recreates the same thread id, restores only thread `name`, and clears pending incoming messages for that thread.
+- `reset_thread` deletes all thread messages and recreates the same thread id while restoring only thread `name`.
 - `delete_thread` and `reset_thread` automatically clear thread task state for that thread.
 - `get_messages` returns thread metadata and one ordered `messages` list.
 - `get_messages` keeps only `user_message`/`assistant_message`/`system_message`/`tool` step types.
@@ -303,8 +304,7 @@ Tool/run family includes:
 
 Easierlit mapping:
 
-- Incoming `app.recv()` data is user-message flow.
-- Incoming `app.arecv()` data follows the same user-message flow contract.
+- Incoming `on_message(..., incoming)` data is user-message flow.
 - Outgoing `app.add_message()` is assistant-message flow.
 - Outgoing `app.add_tool()/app.update_tool()` is tool-call flow with step name=`tool_name`.
 - Outgoing `app.add_thought()/app.update_thought()` is tool-call flow with fixed step name=`Reasoning`.
@@ -313,7 +313,7 @@ UI option reference (Chainlit): `ui.cot` supports `full`, `tool_call`, `hidden`.
 
 ## 12. Troubleshooting
 
-`Cannot enqueue incoming message to a closed app`:
+`Cannot dispatch incoming message to a closed app`:
 
 - Meaning: worker/app already closed, usually after `run_func` crash.
 - Action: inspect server traceback, fix root error, restart server.

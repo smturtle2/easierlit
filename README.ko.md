@@ -20,8 +20,8 @@ Chainlit의 코어 기능은 유지하면서 워커 루프, 메시지 흐름, �
 
 - 런타임 역할 분리가 명확합니다.
 - `EasierlitServer`: 메인 프로세스에서 Chainlit 서버 실행
-- `EasierlitClient`: `run_funcs`를 전역 thread 워커들에서 실행(함수당 1개 스레드)
-- `EasierlitApp`: 입력/출력 큐 브리지
+- `EasierlitClient`: `on_message(app, incoming)` 기반 메시지 디스패처
+- `EasierlitApp`: 출력 명령(message/thread CRUD) 브리지
 - 운영 기본값이 실용적입니다.
 - headless 서버 실행
 - sidebar 기본 상태 `open`
@@ -39,8 +39,8 @@ Chainlit의 코어 기능은 유지하면서 워커 루프, 메시지 흐름, �
 User UI
   -> Chainlit callbacks (on_message / on_chat_start / ...)
   -> Easierlit runtime bridge
-  -> EasierlitApp incoming queue
-  -> worker의 run_funcs[i](app)
+  -> EasierlitClient incoming dispatcher
+  -> 메시지별 on_message(app, incoming) worker(thread)
   -> app.* APIs (message + thread CRUD)
   -> runtime dispatcher
   -> realtime session OR data-layer fallback
@@ -61,52 +61,43 @@ pip install -e ".[dev]"
 ## Quick Start (60초)
 
 ```python
-from easierlit import AppClosedError, EasierlitClient, EasierlitServer
+from easierlit import EasierlitClient, EasierlitServer
 
 
-def run_func(app):
-    while True:
-        try:
-            incoming = app.recv(timeout=1.0)
-        except TimeoutError:
-            continue
-        except AppClosedError:
-            break
-
-        app.add_message(
-            thread_id=incoming.thread_id,
-            content=f"Echo: {incoming.content}",
-            author="EchoBot",
-        )
+def on_message(app, incoming):
+    app.add_message(
+        thread_id=incoming.thread_id,
+        content=f"Echo: {incoming.content}",
+        author="EchoBot",
+    )
 
 
-client = EasierlitClient(run_funcs=[run_func])
+client = EasierlitClient(on_message=on_message)
 server = EasierlitServer(client=client)
 server.serve()  # blocking
 ```
 
-비동기 워커 패턴:
+선택적 백그라운드 run_func 패턴:
 
 ```python
-from easierlit import AppClosedError, EasierlitClient, EasierlitServer
+import time
+
+from easierlit import EasierlitClient, EasierlitServer
 
 
-async def run_func(app):
-    while True:
-        try:
-            incoming = await app.arecv()
-        except AppClosedError:
-            break
+def on_message(app, incoming):
+    app.add_message(incoming.thread_id, f"Echo: {incoming.content}", author="EchoBot")
 
-        app.add_message(
-            thread_id=incoming.thread_id,
-            content=f"Echo: {incoming.content}",
-            author="EchoBot",
-        )
+
+def run_func(app):
+    while not app.is_closed():
+        # 선택적 백그라운드 워커; 입력 polling은 하지 않습니다.
+        time.sleep(0.2)
 
 
 client = EasierlitClient(
-    run_funcs=[run_func],
+    on_message=on_message,
+    run_funcs=[run_func],  # optional
     run_func_mode="auto",  # auto/sync/async
 )
 server = EasierlitServer(client=client)
@@ -151,10 +142,14 @@ EasierlitServer(
     discord=None,
 )
 
-EasierlitClient(run_funcs, worker_mode="thread", run_func_mode="auto")
+EasierlitClient(
+    on_message,
+    run_funcs=None,
+    worker_mode="thread",
+    run_func_mode="auto",
+    max_message_workers=64,
+)
 
-EasierlitApp.recv(timeout=None)
-EasierlitApp.arecv(timeout=None)
 EasierlitApp.start_thread_task(thread_id)
 EasierlitApp.end_thread_task(thread_id)
 EasierlitApp.is_thread_task_running(thread_id) -> bool
@@ -264,14 +259,13 @@ Thread 작업 상태 API:
 동작 핵심:
 
 - `app.add_message(...)`는 생성된 `message_id`를 반환
-- `app.enqueue(...)`는 입력을 `user_message`로 UI/data layer에 반영하고 동시에 `app.recv()/app.arecv()`에도 전달
+- `app.enqueue(...)`는 입력을 `user_message`로 UI/data layer에 반영하고 `on_message`로 디스패치
 - `app.add_tool(...)`은 도구 호출 step을 생성하며 도구명은 step author/name으로 표시됩니다.
 - `app.add_thought(...)`는 동일한 도구 호출 경로를 사용하고 도구명은 `Reasoning`으로 고정됩니다.
-- `app.start_thread_task(...)`는 특정 thread를 작업 중 상태로 표시하고 해당 thread 내부 입력 잠금을 활성화합니다.
-- `app.end_thread_task(...)`는 해당 thread의 작업 중 상태를 해제하고 내부 입력 잠금을 해제합니다.
+- `app.start_thread_task(...)`는 특정 thread를 작업 중(UI indicator) 상태로 표시합니다.
+- `app.end_thread_task(...)`는 해당 thread의 작업 중(UI indicator) 상태를 해제합니다.
 - `app.is_thread_task_running(...)`는 thread 작업 중 상태를 반환합니다.
-- `app.is_thread_task_running(thread_id)`가 `True`인 동안 해당 thread의 `@cl.on_message` 웹 입력은 조용히 무시됩니다.
-- `app.enqueue(...)` 경로는 thread 작업 상태의 영향을 받지 않습니다.
+- Easierlit은 각 `on_message` 실행 구간에서 thread 작업 상태를 자동으로 관리합니다.
 - `app.get_messages(...)`은 thread 메타데이터와 순서 보존 `messages` 단일 목록을 반환합니다.
 - `app.get_messages(...)`은 `user_message`/`assistant_message`/`system_message`/`tool`만 포함하고 run 계열 step은 제외합니다.
 - `app.get_messages(...)`은 `thread["elements"]`를 `forId` 별칭(`forId`/`for_id`/`stepId`/`step_id`) 기준으로 각 message에 매핑합니다.

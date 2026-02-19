@@ -64,7 +64,7 @@ def test_serve_forces_headless_and_sidebar():
         assert fake_env["CHAINLIT_AUTH_SECRET"] == generated_secret
         assert fake_env["UVICORN_WS_PROTOCOL"] == "websockets-sansio"
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     auth = EasierlitAuthConfig(
         username="admin",
         password="admin",
@@ -111,7 +111,7 @@ def test_serve_keeps_existing_chainlit_auth_env_and_skips_secret_generation():
         assert fake_env["CHAINLIT_AUTH_COOKIE_NAME"] == "external_cookie"
         assert fake_env["CHAINLIT_AUTH_SECRET"] == "external_secret_external_secret_1234"
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     server = EasierlitServer(
         client=client,
         run_chainlit_fn=fake_run_chainlit,
@@ -135,7 +135,7 @@ def test_serve_replaces_short_chainlit_auth_secret_and_restores_original():
     def fake_run_chainlit(_target: str):
         observed["secret"] = fake_env["CHAINLIT_AUTH_SECRET"]
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     server = EasierlitServer(
         client=client,
         run_chainlit_fn=fake_run_chainlit,
@@ -156,7 +156,7 @@ def test_default_cookie_name_varies_by_host_port_root_path_scope():
         def fake_run_chainlit(_target: str):
             observed_cookie_names.append(fake_env["CHAINLIT_AUTH_COOKIE_NAME"])
 
-        client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+        client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
         server = EasierlitServer(
             client=client,
             host=host,
@@ -195,7 +195,7 @@ def test_blank_chainlit_auth_env_values_are_treated_as_missing_and_restored():
         observed["cookie_name"] = fake_env["CHAINLIT_AUTH_COOKIE_NAME"]
         observed["secret"] = fake_env["CHAINLIT_AUTH_SECRET"]
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     server = EasierlitServer(
         client=client,
         run_chainlit_fn=fake_run_chainlit,
@@ -217,7 +217,7 @@ def test_serve_sets_default_ws_protocol_when_missing_and_restores_after_shutdown
     def fake_run_chainlit(_target: str):
         observed["ws_protocol"] = fake_env["UVICORN_WS_PROTOCOL"]
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     server = EasierlitServer(
         client=client,
         run_chainlit_fn=fake_run_chainlit,
@@ -237,7 +237,7 @@ def test_serve_preserves_existing_ws_protocol_env_value():
     def fake_run_chainlit(_target: str):
         observed["ws_protocol"] = fake_env["UVICORN_WS_PROTOCOL"]
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     server = EasierlitServer(
         client=client,
         run_chainlit_fn=fake_run_chainlit,
@@ -252,7 +252,7 @@ def test_serve_preserves_existing_ws_protocol_env_value():
 
 def test_runtime_is_unbound_after_serve():
     fake_env: dict[str, str] = {}
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     server = EasierlitServer(
         client=client,
         run_chainlit_fn=lambda _target: None,
@@ -284,7 +284,7 @@ def test_default_auth_and_persistence_are_enabled_when_omitted(caplog):
         observed["password"] = auth.password
         observed["sqlite_path"] = persistence.sqlite_path
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     with caplog.at_level("WARNING", logger="easierlit.server"):
         server = EasierlitServer(
             client=client,
@@ -314,7 +314,7 @@ def test_default_auth_prefers_env_credentials():
         observed["username"] = auth.username
         observed["password"] = auth.password
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     server = EasierlitServer(
         client=client,
         run_chainlit_fn=fake_run_chainlit,
@@ -345,7 +345,7 @@ def test_default_auth_requires_both_env_values(username, password):
     else:
         os.environ["EASIERLIT_AUTH_PASSWORD"] = password
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     with pytest.raises(ValueError, match="must be set together"):
         EasierlitServer(client=client)
 
@@ -358,7 +358,7 @@ def test_discord_enabled_prefers_config_token():
         observed["token"] = fake_env.get("DISCORD_BOT_TOKEN")
         observed["runtime_token"] = get_runtime().get_discord_token()
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     server = EasierlitServer(
         client=client,
         discord=EasierlitDiscordConfig(enabled=True, bot_token="config-token"),
@@ -380,7 +380,7 @@ def test_discord_config_default_enabled_when_passed():
     def fake_run_chainlit(_target: str):
         observed["runtime_token"] = get_runtime().get_discord_token()
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     server = EasierlitServer(
         client=client,
         discord=EasierlitDiscordConfig(),
@@ -401,7 +401,7 @@ def test_discord_enabled_falls_back_to_env_token():
     def fake_run_chainlit(_target: str):
         observed["runtime_token"] = get_runtime().get_discord_token()
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     server = EasierlitServer(
         client=client,
         discord=EasierlitDiscordConfig(enabled=True),
@@ -418,7 +418,7 @@ def test_discord_enabled_falls_back_to_env_token():
 def test_discord_enabled_without_any_token_raises():
     fake_env: dict[str, str] = {}
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     server = EasierlitServer(
         client=client,
         discord=EasierlitDiscordConfig(enabled=True),
@@ -446,7 +446,7 @@ def test_discord_default_is_disabled_even_if_env_exists():
         observed["runtime_token"] = get_runtime().get_discord_token()
         observed["env_during_serve"] = fake_env.get("DISCORD_BOT_TOKEN")
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
     server = EasierlitServer(
         client=client,
         run_chainlit_fn=fake_run_chainlit,
@@ -467,7 +467,7 @@ def test_worker_crash_triggers_single_sigint():
     def fake_kill(pid: int, sig: int):
         kill_calls.append((pid, sig))
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
 
     def fake_run_chainlit(_target: str):
         handler = client._worker_crash_handler
@@ -498,7 +498,7 @@ def test_worker_crash_falls_back_to_sigterm():
         if sig == signal.SIGINT:
             raise OSError("SIGINT failed")
 
-    client = EasierlitClient(run_funcs=[lambda _app: None], worker_mode="thread")
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
 
     def fake_run_chainlit(_target: str):
         handler = client._worker_crash_handler

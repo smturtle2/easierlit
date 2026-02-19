@@ -11,7 +11,6 @@ from easierlit import (
     EasierlitApp,
     EasierlitAuthConfig,
     EasierlitClient,
-    IncomingMessage,
     ThreadSessionNotActiveError,
 )
 from easierlit.runtime import RuntimeRegistry, get_runtime
@@ -242,52 +241,6 @@ def test_reset_thread_recreates_same_thread_id_and_only_restores_name():
     assert fake.updated_threads[0]["name"] == "Reset Name"
     assert fake.updated_threads[0]["metadata"] is None
     assert fake.updated_threads[0]["tags"] is None
-
-
-def test_reset_thread_clears_pending_incoming_messages_for_thread():
-    fake = FakeDataLayer()
-    runtime = RuntimeRegistry(
-        data_layer_getter=lambda: fake,
-        init_http_context_fn=lambda **_kwargs: None,
-    )
-    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake)
-
-    app._enqueue_incoming(
-        IncomingMessage(
-            thread_id="thread-1",
-            session_id="session-1",
-            message_id="msg-1",
-            content="clear me",
-            author="User",
-        )
-    )
-    app._enqueue_incoming(
-        IncomingMessage(
-            thread_id="thread-2",
-            session_id="session-2",
-            message_id="msg-2",
-            content="keep me",
-            author="User",
-        )
-    )
-    app._enqueue_incoming(
-        IncomingMessage(
-            thread_id="thread-1",
-            session_id="session-3",
-            message_id="msg-3",
-            content="clear me too",
-            author="User",
-        )
-    )
-
-    app.reset_thread("thread-1")
-
-    received = app.recv(timeout=1.0)
-    assert received.thread_id == "thread-2"
-    assert received.content == "keep me"
-
-    with pytest.raises(TimeoutError):
-        app.recv(timeout=0.05)
 
 
 def test_reset_thread_raises_for_missing_thread():
@@ -719,7 +672,7 @@ def test_update_thread_auto_sets_owner_from_auth_existing_user():
     fake = FakeDataLayer(users={"admin": "user-admin"})
     runtime = RuntimeRegistry(data_layer_getter=lambda: fake)
     app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake)
-    client = EasierlitClient(run_funcs=[lambda _app: None])
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None])
     runtime.bind(
         client=client,
         app=app,
@@ -742,7 +695,7 @@ def test_update_thread_auto_creates_owner_when_missing():
     fake = FakeDataLayer(users={})
     runtime = RuntimeRegistry(data_layer_getter=lambda: fake)
     app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake)
-    client = EasierlitClient(run_funcs=[lambda _app: None])
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None])
     runtime.bind(
         client=client,
         app=app,

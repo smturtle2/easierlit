@@ -41,7 +41,7 @@ def test_default_sqlite_data_layer_is_registered_when_no_external_db(tmp_path):
 
     db_path = tmp_path / "default-sidebar.db"
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None]),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None]),
         app=EasierlitApp(),
         persistence=EasierlitPersistenceConfig(enabled=True, sqlite_path=str(db_path)),
     )
@@ -84,7 +84,7 @@ def test_default_sqlite_is_not_registered_when_database_url_exists():
     config.ui.cot = "hidden"
 
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None]),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None]),
         app=EasierlitApp(),
         persistence=EasierlitPersistenceConfig(enabled=True),
     )
@@ -127,7 +127,7 @@ def test_default_sqlite_data_layer_passes_storage_provider(tmp_path, monkeypatch
     db_path = tmp_path / "storage-provider.db"
     storage_dir = tmp_path / "public" / "easierlit"
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None]),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None]),
         app=EasierlitApp(),
         persistence=EasierlitPersistenceConfig(
             enabled=True,
@@ -193,7 +193,7 @@ def test_default_sqlite_data_layer_uses_default_local_storage_provider(tmp_path,
 
     db_path = tmp_path / "default-local-provider.db"
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None]),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None]),
         app=EasierlitApp(),
         persistence=EasierlitPersistenceConfig(enabled=True, sqlite_path=str(db_path)),
     )
@@ -292,7 +292,7 @@ def test_default_sqlite_data_layer_get_element_refreshes_url_from_object_key(tmp
 
     db_path = tmp_path / "refresh-element-url.db"
     runtime.bind(
-        client=EasierlitClient(run_funcs=[lambda _app: None]),
+        client=EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None]),
         app=EasierlitApp(),
         persistence=EasierlitPersistenceConfig(enabled=True, sqlite_path=str(db_path)),
     )
