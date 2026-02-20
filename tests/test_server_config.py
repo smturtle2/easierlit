@@ -1,6 +1,7 @@
 import os
 import re
 import signal
+import threading
 
 import pytest
 from chainlit.config import config
@@ -9,7 +10,9 @@ from easierlit import (
     EasierlitAuthConfig,
     EasierlitClient,
     EasierlitDiscordConfig,
+    IncomingMessage,
     EasierlitPersistenceConfig,
+    RunFuncExecutionError,
     EasierlitServer,
 )
 from easierlit.runtime import get_runtime
@@ -269,6 +272,33 @@ def test_runtime_is_unbound_after_serve():
     assert runtime.get_discord_token() is None
 
 
+def test_server_passes_max_outgoing_workers_to_runtime():
+    fake_env: dict[str, str] = {}
+    observed = {"max_outgoing_workers": None}
+
+    def fake_run_chainlit(_target: str):
+        runtime = get_runtime()
+        observed["max_outgoing_workers"] = runtime._max_outgoing_workers
+
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
+    server = EasierlitServer(
+        client=client,
+        run_chainlit_fn=fake_run_chainlit,
+        jwt_secret_provider=lambda: "x" * 64,
+        max_outgoing_workers=7,
+        environ=fake_env,
+    )
+    server.serve()
+
+    assert observed["max_outgoing_workers"] == 7
+
+
+def test_invalid_max_outgoing_workers_raises_value_error():
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
+    with pytest.raises(ValueError, match="max_outgoing_workers"):
+        EasierlitServer(client=client, max_outgoing_workers=0)
+
+
 def test_default_auth_and_persistence_are_enabled_when_omitted(caplog):
     observed = {"username": None, "password": None, "sqlite_path": None}
     fake_env: dict[str, str] = {}
@@ -517,3 +547,46 @@ def test_worker_crash_falls_back_to_sigterm():
     assert len(kill_calls) == 2
     assert kill_calls[0][1] == signal.SIGINT
     assert kill_calls[1][1] == signal.SIGTERM
+
+
+def test_on_message_worker_crash_triggers_sigint():
+    kill_calls: list[tuple[int, int]] = []
+    crash_event = threading.Event()
+    fake_env: dict[str, str] = {}
+
+    def fake_kill(pid: int, sig: int):
+        kill_calls.append((pid, sig))
+        crash_event.set()
+
+    def _on_message(_app, _incoming):
+        raise RuntimeError("on_message boom")
+
+    client = EasierlitClient(on_message=_on_message, run_funcs=[lambda _app: None], worker_mode="thread")
+
+    def fake_run_chainlit(_target: str):
+        runtime = get_runtime()
+        runtime.dispatch_incoming(
+            IncomingMessage(
+                thread_id="thread-1",
+                session_id="session-1",
+                message_id="msg-1",
+                content="hello",
+                author="User",
+            )
+        )
+        assert crash_event.wait(timeout=2.0)
+
+    server = EasierlitServer(
+        client=client,
+        run_chainlit_fn=fake_run_chainlit,
+        jwt_secret_provider=lambda: "x" * 64,
+        kill_fn=fake_kill,
+        environ=fake_env,
+    )
+
+    with pytest.raises(RunFuncExecutionError):
+        server.serve()
+
+    assert len(kill_calls) == 1
+    assert kill_calls[0][0] == os.getpid()
+    assert kill_calls[0][1] == signal.SIGINT

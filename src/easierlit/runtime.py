@@ -52,6 +52,20 @@ _ELEMENT_DB_COLUMNS = (
     "props",
 )
 
+_REALTIME_STEP_ACTIONS: dict[str, tuple[str, str]] = {
+    "add_message": ("send_step", "Add message"),
+    "update_message": ("update_step", "Update"),
+    "add_tool": ("send_step", "Add tool"),
+    "update_tool": ("update_step", "Update tool"),
+}
+
+_DATA_LAYER_STEP_WRITERS: dict[str, str] = {
+    "add_message": "create_step",
+    "add_tool": "create_step",
+    "update_message": "update_step",
+    "update_tool": "update_step",
+}
+
 
 class RuntimeRegistry:
     def __init__(
@@ -73,6 +87,9 @@ class RuntimeRegistry:
 
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._dispatcher_task: asyncio.Task[None] | None = None
+        self._dispatcher_lane_tasks: list[asyncio.Task[None]] = []
+        self._dispatcher_lane_queues: list[asyncio.Queue[OutgoingCommand]] = []
+        self._max_outgoing_workers = 4
 
         self._data_layer_getter = data_layer_getter
         self._init_http_context_fn = init_http_context_fn
@@ -89,16 +106,24 @@ class RuntimeRegistry:
         auth: EasierlitAuthConfig | None = None,
         persistence: EasierlitPersistenceConfig | None = None,
         discord_token: str | None = None,
+        max_outgoing_workers: int = 4,
     ) -> None:
+        if not isinstance(max_outgoing_workers, int) or max_outgoing_workers < 1:
+            raise ValueError("max_outgoing_workers must be an integer >= 1.")
+
         with self._lock:
             self._client = client
             self._app = app
             self._auth = auth
             self._persistence = persistence
             self._discord_token = discord_token
+            self._max_outgoing_workers = max_outgoing_workers
             self._thread_to_session.clear()
             self._session_to_thread.clear()
             self._thread_to_discord_channel.clear()
+            self._dispatcher_task = None
+            self._dispatcher_lane_tasks = []
+            self._dispatcher_lane_queues = []
             self._discord_sender = None
 
     def unbind(self) -> None:
@@ -113,6 +138,9 @@ class RuntimeRegistry:
             self._thread_to_discord_channel.clear()
             self._main_loop = None
             self._dispatcher_task = None
+            self._dispatcher_lane_tasks = []
+            self._dispatcher_lane_queues = []
+            self._max_outgoing_workers = 4
             self._discord_sender = None
 
     def get_client(self) -> EasierlitClient | None:
@@ -201,22 +229,36 @@ class RuntimeRegistry:
         if self._dispatcher_task and not self._dispatcher_task.done():
             return
 
-        self._dispatcher_task = asyncio.create_task(self._dispatch_outgoing_loop())
+        self._dispatcher_lane_queues = [
+            asyncio.Queue() for _ in range(self._max_outgoing_workers)
+        ]
+        self._dispatcher_lane_tasks = [
+            asyncio.create_task(self._dispatch_outgoing_lane_loop(lane_queue))
+            for lane_queue in self._dispatcher_lane_queues
+        ]
+        self._dispatcher_task = asyncio.create_task(self._dispatch_outgoing_router_loop())
 
     async def stop_dispatcher(self) -> None:
-        task = self._dispatcher_task
-        if task is None:
+        tasks: list[asyncio.Task[Any]] = []
+
+        router_task = self._dispatcher_task
+        if router_task is not None:
+            router_task.cancel()
+            tasks.append(router_task)
+
+        for lane_task in self._dispatcher_lane_tasks:
+            lane_task.cancel()
+            tasks.append(lane_task)
+
+        if not tasks:
             return
 
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        finally:
-            self._dispatcher_task = None
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._dispatcher_task = None
+        self._dispatcher_lane_tasks = []
+        self._dispatcher_lane_queues = []
 
-    async def _dispatch_outgoing_loop(self) -> None:
+    async def _dispatch_outgoing_router_loop(self) -> None:
         app = self._app
         if app is None:
             return
@@ -228,7 +270,22 @@ class RuntimeRegistry:
                 continue
 
             if command.command == "close":
+                await self._broadcast_dispatcher_close_signal()
                 break
+
+            lane_queue = self._resolve_outgoing_lane_queue(command)
+            if lane_queue is None:
+                continue
+            await lane_queue.put(command)
+
+    async def _dispatch_outgoing_lane_loop(
+        self,
+        lane_queue: asyncio.Queue[OutgoingCommand],
+    ) -> None:
+        while True:
+            command = await lane_queue.get()
+            if command.command == "close":
+                return
 
             try:
                 await self.apply_outgoing_command(command)
@@ -237,6 +294,31 @@ class RuntimeRegistry:
                     "Failed to apply outgoing command: %s",
                     command.model_dump(),
                 )
+
+    async def _broadcast_dispatcher_close_signal(self) -> None:
+        if not self._dispatcher_lane_queues:
+            return
+
+        close_command = OutgoingCommand(command="close")
+        for lane_queue in self._dispatcher_lane_queues:
+            await lane_queue.put(close_command)
+
+    def _resolve_outgoing_lane_queue(
+        self,
+        command: OutgoingCommand,
+    ) -> asyncio.Queue[OutgoingCommand] | None:
+        if not self._dispatcher_lane_queues:
+            return None
+        lane_index = self._resolve_outgoing_lane_index(command.thread_id)
+        return self._dispatcher_lane_queues[lane_index]
+
+    def _resolve_outgoing_lane_index(self, thread_id: str | None) -> int:
+        lane_count = len(self._dispatcher_lane_queues)
+        if lane_count < 2:
+            return 0
+        if not thread_id:
+            return 0
+        return hash(thread_id) % lane_count
 
     def _resolve_session(self, thread_id: str) -> WebsocketSession | None:
         from chainlit.session import WebsocketSession
@@ -367,47 +449,21 @@ class RuntimeRegistry:
         init_ws_context(session)
         thread_id = self._require_thread_id(command)
 
-        if command.command == "add_message":
-            message_id = self._require_message_id(command, action="Add message")
+        realtime_step_action = _REALTIME_STEP_ACTIONS.get(command.command)
+        if realtime_step_action is not None:
+            emitter_name, action_name = realtime_step_action
+            message_id = self._require_message_id(command, action=action_name)
             step_dict = self._build_step_payload(
                 command=command,
                 thread_id=thread_id,
                 message_id=message_id,
             )
-            await context.emitter.send_step(step_dict)
-            await self._emit_realtime_elements(command.elements)
-            return
-
-        if command.command == "update_message":
-            message_id = self._require_message_id(command, action="Update")
-            step_dict = self._build_step_payload(
-                command=command,
-                thread_id=thread_id,
-                message_id=message_id,
-            )
-            await context.emitter.update_step(step_dict)
-            await self._emit_realtime_elements(command.elements)
-            return
-
-        if command.command == "add_tool":
-            message_id = self._require_message_id(command, action="Add tool")
-            step_dict = self._build_step_payload(
-                command=command,
-                thread_id=thread_id,
-                message_id=message_id,
-            )
-            await context.emitter.send_step(step_dict)
-            await self._emit_realtime_elements(command.elements)
-            return
-
-        if command.command == "update_tool":
-            message_id = self._require_message_id(command, action="Update tool")
-            step_dict = self._build_step_payload(
-                command=command,
-                thread_id=thread_id,
-                message_id=message_id,
-            )
-            await context.emitter.update_step(step_dict)
+            emitter = getattr(context.emitter, emitter_name, None)
+            if not callable(emitter):
+                raise RuntimeError(
+                    f"Chainlit realtime emitter '{emitter_name}' is not available."
+                )
+            await emitter(step_dict)
             await self._emit_realtime_elements(command.elements)
             return
 
@@ -469,6 +525,15 @@ class RuntimeRegistry:
             await data_layer.delete_step(message_id)
             return
 
+        writer_name = _DATA_LAYER_STEP_WRITERS.get(command.command)
+        if writer_name is None:
+            raise ValueError(f"Unsupported command: {command.command}")
+        step_writer = getattr(data_layer, writer_name, None)
+        if not callable(step_writer):
+            raise RuntimeError(
+                f"Data layer does not support required method '{writer_name}' for '{command.command}'."
+            )
+
         message_id = self._require_message_id(command, action=command.command)
         timestamp = self._utc_now_fn()
         step_dict = self._build_step_payload(
@@ -477,28 +542,13 @@ class RuntimeRegistry:
             message_id=message_id,
             timestamp=timestamp,
         )
-
-        if self._is_create_command(command.command):
-            await data_layer.create_step(step_dict)
-            await self._persist_data_layer_elements(
-                data_layer=data_layer,
-                thread_id=thread_id,
-                message_id=message_id,
-                elements=command.elements,
-            )
-            return
-
-        if self._is_update_command(command.command):
-            await data_layer.update_step(step_dict)
-            await self._persist_data_layer_elements(
-                data_layer=data_layer,
-                thread_id=thread_id,
-                message_id=message_id,
-                elements=command.elements,
-            )
-            return
-
-        raise ValueError(f"Unsupported command: {command.command}")
+        await step_writer(step_dict)
+        await self._persist_data_layer_elements(
+            data_layer=data_layer,
+            thread_id=thread_id,
+            message_id=message_id,
+            elements=command.elements,
+        )
 
     async def _persist_data_layer_elements(
         self,
@@ -706,7 +756,7 @@ class RuntimeRegistry:
             if not file_path.is_absolute():
                 file_path = Path.cwd() / file_path
             if file_path.is_file():
-                return file_path.read_bytes()
+                return await asyncio.to_thread(file_path.read_bytes)
             return None
 
         content = element_dict.get("content")
@@ -726,7 +776,7 @@ class RuntimeRegistry:
             except Exception:
                 local_file_path = None
             if local_file_path is not None and local_file_path.is_file():
-                return local_file_path.read_bytes()
+                return await asyncio.to_thread(local_file_path.read_bytes)
 
         return await self._download_url_bytes(url)
 

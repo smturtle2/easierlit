@@ -52,6 +52,8 @@ Notes:
 - `on_message` can be sync or async.
 - `run_funcs` is optional for background tasks.
 - `run_func_mode="auto"` detects sync/async behavior for each function.
+- Async awaitables run on a dedicated event-loop runner (avoids per-message `asyncio.run(...)` loop bootstrap).
+- CPU-bound Python code still shares the GIL; use process-level offloading for true CPU isolation.
 
 ## 4. Public API Signatures
 
@@ -63,6 +65,7 @@ EasierlitServer(
     host="127.0.0.1",
     port=8000,
     root_path="",
+    max_outgoing_workers=4,
     auth=None,
     persistence=None,
     discord=None,
@@ -116,8 +119,14 @@ Easierlit server enforces these defaults:
 - If `CHAINLIT_AUTH_SECRET` is set but shorter than 32 bytes, Easierlit replaces it with a secure generated secret for the current run; if missing, Easierlit auto-manages `.chainlit/jwt.secret`.
 - Easierlit restores previous `CHAINLIT_AUTH_COOKIE_NAME` and `CHAINLIT_AUTH_SECRET` after shutdown.
 - `UVICORN_WS_PROTOCOL` defaults to `websockets-sansio` when not set.
-- `run_func` fail-fast: any worker exception triggers server shutdown.
+- Worker fail-fast: any `run_func` or `on_message` exception triggers server shutdown.
+- Outgoing dispatcher runs with thread-aware parallel lanes (`max_outgoing_workers`, default `4`).
+- Outgoing order is guaranteed within the same `thread_id`, but cross-thread global order is not guaranteed.
 - Discord bridge is disabled by default unless `discord=EasierlitDiscordConfig(...)` is provided.
+- Async awaitables are isolated by role:
+- `run_func` awaitables use a dedicated runner loop.
+- `on_message` awaitables use a thread-aware runner pool sized as `min(max_message_workers, 8)`.
+- Same `thread_id` stays pinned to one message runner lane.
 
 ## 6. Auth, Persistence, and Discord
 
@@ -205,17 +214,12 @@ Recommended structure:
 3. Use `app.*` APIs for all outputs and CRUD operations.
 4. Keep per-command exceptions contextual for logs.
 
-If `on_message` raises uncaught exception:
-
-- Easierlit logs traceback.
-- Easierlit sends a short error notice message in the same thread.
-- Server stays alive and processes next messages.
-
-If `run_func` raises uncaught exception (background workers):
+If `on_message` or `run_func` raises uncaught exception:
 
 - Easierlit logs traceback.
 - Easierlit triggers server shutdown.
 - Further incoming dispatch attempts are suppressed with shutdown messaging.
+- Breaking behavior: `on_message` no longer emits an internal notice and continue.
 
 External in-process input:
 
@@ -274,6 +278,7 @@ Execution model:
 2. If session inactive and data layer exists, Easierlit runs persistence fallback.
 3. Fallback initializes internal HTTP Chainlit context before step CRUD.
 4. If no session and no data layer, `ThreadSessionNotActiveError` is raised when queued command is applied.
+5. Outgoing commands are processed by `thread_id` lane. Same-thread order is preserved; different threads may complete out of global order.
 
 ## 10. Creating Threads from run_func
 

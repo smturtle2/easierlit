@@ -17,6 +17,7 @@ EasierlitServer(
     host: str = "127.0.0.1",
     port: int = 8000,
     root_path: str = "",
+    max_outgoing_workers: int = 4,
     auth: EasierlitAuthConfig | None = None,
     persistence: EasierlitPersistenceConfig | None = None,
     discord: EasierlitDiscordConfig | None = None,
@@ -27,6 +28,7 @@ Parameters:
 
 - `client`: required `EasierlitClient` instance.
 - `host`, `port`, `root_path`: Chainlit server binding/runtime path.
+- `max_outgoing_workers`: outgoing dispatcher lane count. Must be `>= 1`. Default `4`.
 - `auth`: auth bootstrap config. If `None`, Easierlit auto-enables auth using:
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` when both are present.
 - fallback `admin` / `admin` when both are absent (warning log emitted).
@@ -43,6 +45,7 @@ serve() -> None
 Behavior:
 
 - Binds runtime (`client`, `app`, auth, persistence).
+- Binds runtime outgoing dispatcher lane count from `max_outgoing_workers`.
 - Starts worker via `client.run(app)`.
 - Starts Chainlit in headless mode.
 - Forces sidebar default state to `open`.
@@ -62,6 +65,7 @@ May raise:
 - `WorkerAlreadyRunningError` from `client.run(...)`.
 - `RunFuncExecutionError` from `client.stop(...)` during shutdown when worker crashed.
 - `ValueError` when exactly one of `EASIERLIT_AUTH_USERNAME` and `EASIERLIT_AUTH_PASSWORD` is set.
+- `ValueError` when `max_outgoing_workers < 1`.
 - `ValueError` when Discord is enabled and no non-empty token is available.
 
 ## 3. EasierlitClient
@@ -106,9 +110,15 @@ Behavior:
 - Enables message dispatch via `dispatch_incoming(...)`.
 - Runs one daemon thread per incoming message.
 - Serializes by `thread_id` and executes different thread ids in parallel (up to `max_message_workers`).
+- Async awaitables are isolated by role:
+- `run_func` awaitables use one dedicated internal event-loop runner.
+- `on_message` awaitables use a thread-aware runner pool sized as `min(max_message_workers, 8)`.
+- Same `thread_id` maps to the same `on_message` runner lane.
+- CPU-bound Python handlers still contend on GIL; this optimization primarily improves awaitable/I/O-heavy paths.
 - Starts one daemon thread worker per `run_func`.
 - Invokes each `run_func(app)` against the same shared app.
 - For uncaught worker exceptions, records traceback and closes app (fail-fast).
+- Breaking behavior: uncaught `on_message` errors now fail-fast (same as `run_func`).
 - Normal return of one `run_func` does not stop other workers.
 
 Raises:
@@ -190,6 +200,7 @@ Behavior:
 - `elements` forwards Chainlit element objects (image/file/etc.) to runtime.
 - Returns generated `message_id`.
 - Command is later applied by runtime dispatcher.
+- Runtime dispatcher preserves outgoing order within the same `thread_id`; global cross-thread outgoing order is not guaranteed.
 
 ### 4.3 `EasierlitApp.add_tool`
 
@@ -536,7 +547,7 @@ OutgoingCommand(
 |---|---|---|
 | `AppClosedError` | incoming dispatch or enqueue on closed app | Stop processing and restart server if needed |
 | `WorkerAlreadyRunningError` | `client.run()` called while worker alive | Call `client.stop()` first |
-| `RunFuncExecutionError` | Worker raised uncaught error | Inspect traceback, fix run_func logic |
+| `RunFuncExecutionError` | Worker raised uncaught error | Inspect traceback, fix `run_func`/`on_message` logic |
 | `DataPersistenceNotEnabledError` | Thread CRUD without configured data layer | Enable persistence or register data layer |
 | `ThreadSessionNotActiveError` | Applying message command without active session and without data layer | Ensure session is active or configure persistence fallback |
 | `RuntimeError` | `new_thread()` failed to allocate unique ID after retries | Inspect id generation/collision behavior and retry |

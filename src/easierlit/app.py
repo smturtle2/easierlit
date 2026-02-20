@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
-from pathlib import Path
+import logging
 import queue
 import threading
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -16,6 +18,8 @@ from chainlit.user import User
 from .errors import AppClosedError, DataPersistenceNotEnabledError
 from .models import IncomingMessage, OutgoingCommand
 from .runtime import get_runtime
+
+LOGGER = logging.getLogger(__name__)
 
 
 class EasierlitApp:
@@ -142,17 +146,14 @@ class EasierlitApp:
         elements: list[Any] | None = None,
     ) -> str:
         """Enqueue an assistant message and return the generated message id."""
-        message_id = self._new_message_id()
-        self._enqueue_outgoing_command(
+        return self._enqueue_new_step_command(
             command="add_message",
             thread_id=thread_id,
-            message_id=message_id,
             content=content,
             author=author,
             metadata=metadata,
             elements=elements,
         )
-        return message_id
 
     def add_tool(
         self,
@@ -163,17 +164,14 @@ class EasierlitApp:
         elements: list[Any] | None = None,
     ) -> str:
         """Enqueue a tool-call step and return the generated message id."""
-        message_id = self._new_message_id()
-        self._enqueue_outgoing_command(
+        return self._enqueue_new_step_command(
             command="add_tool",
             thread_id=thread_id,
-            message_id=message_id,
             content=content,
             author=tool_name,
             metadata=metadata,
             elements=elements,
         )
-        return message_id
 
     def add_thought(
         self,
@@ -199,7 +197,7 @@ class EasierlitApp:
         metadata: dict | None = None,
         elements: list[Any] | None = None,
     ) -> None:
-        self._enqueue_outgoing_command(
+        self._enqueue_existing_step_command(
             command="update_message",
             thread_id=thread_id,
             message_id=message_id,
@@ -217,7 +215,7 @@ class EasierlitApp:
         metadata: dict | None = None,
         elements: list[Any] | None = None,
     ) -> None:
-        self._enqueue_outgoing_command(
+        self._enqueue_existing_step_command(
             command="update_tool",
             thread_id=thread_id,
             message_id=message_id,
@@ -473,15 +471,31 @@ class EasierlitApp:
 
     def _emit_thread_task_state(self, *, thread_id: str, is_running: bool) -> None:
         # Task indicator emission is best-effort and must not break worker flow.
-        try:
-            self._runtime.run_coroutine_sync(
-                self._runtime.set_thread_task_state(
-                    thread_id=thread_id,
-                    is_running=is_running,
-                )
-            )
-        except Exception:
+        main_loop = self._runtime.get_main_loop()
+        if main_loop is None or not main_loop.is_running():
             return
+
+        coroutine = self._runtime.set_thread_task_state(
+            thread_id=thread_id,
+            is_running=is_running,
+        )
+        try:
+            future = asyncio.run_coroutine_threadsafe(coroutine, main_loop)
+        except Exception:
+            coroutine.close()
+            return
+
+        def _on_done(task_future) -> None:
+            try:
+                task_future.result()
+            except Exception:
+                LOGGER.exception(
+                    "Failed to emit thread task state for thread '%s' (is_running=%s).",
+                    thread_id,
+                    is_running,
+                )
+
+        future.add_done_callback(_on_done)
 
     def _clear_thread_task_state(self, thread_id: str) -> None:
         if not isinstance(thread_id, str):
@@ -499,6 +513,49 @@ class EasierlitApp:
                 thread_id=normalized,
                 is_running=False,
             )
+
+    def _enqueue_new_step_command(
+        self,
+        *,
+        command: str,
+        thread_id: str,
+        content: str,
+        author: str = "Assistant",
+        metadata: dict | None = None,
+        elements: list[Any] | None = None,
+    ) -> str:
+        message_id = self._new_message_id()
+        self._enqueue_outgoing_command(
+            command=command,
+            thread_id=thread_id,
+            message_id=message_id,
+            content=content,
+            author=author,
+            metadata=metadata,
+            elements=elements,
+        )
+        return message_id
+
+    def _enqueue_existing_step_command(
+        self,
+        *,
+        command: str,
+        thread_id: str,
+        message_id: str,
+        content: str,
+        author: str = "Assistant",
+        metadata: dict | None = None,
+        elements: list[Any] | None = None,
+    ) -> None:
+        self._enqueue_outgoing_command(
+            command=command,
+            thread_id=thread_id,
+            message_id=message_id,
+            content=content,
+            author=author,
+            metadata=metadata,
+            elements=elements,
+        )
 
     def _enqueue_outgoing_command(
         self,

@@ -17,6 +17,7 @@ EasierlitServer(
     host: str = "127.0.0.1",
     port: int = 8000,
     root_path: str = "",
+    max_outgoing_workers: int = 4,
     auth: EasierlitAuthConfig | None = None,
     persistence: EasierlitPersistenceConfig | None = None,
     discord: EasierlitDiscordConfig | None = None,
@@ -27,6 +28,7 @@ EasierlitServer(
 
 - `client`: 필수 `EasierlitClient` 인스턴스
 - `host`, `port`, `root_path`: Chainlit 서버 바인딩/경로 설정
+- `max_outgoing_workers`: outgoing dispatcher lane 개수. `1` 이상이어야 하며 기본값은 `4`
 - `auth`: 인증 부트스트랩 설정. `None`이면 Easierlit이 아래 순서로 인증을 자동 활성화
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD`가 모두 있으면 해당 값 사용
 - 둘 다 없으면 `admin` / `admin` 폴백 사용 (경고 로그 출력)
@@ -43,6 +45,7 @@ serve() -> None
 동작:
 
 - runtime에 `client/app/auth/persistence`를 bind
+- runtime outgoing dispatcher lane 수를 `max_outgoing_workers`로 설정
 - `client.run(app)`로 워커 시작
 - Chainlit headless 실행
 - sidebar 기본 상태를 `open`으로 강제
@@ -62,6 +65,7 @@ serve() -> None
 - `client.run(...)` 경로의 `WorkerAlreadyRunningError`
 - 종료 시 워커 크래시를 재전파하는 `RunFuncExecutionError`
 - `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 중 하나만 설정된 경우 `ValueError`
+- `max_outgoing_workers < 1`인 경우 `ValueError`
 - Discord 활성화 상태에서 토큰이 없을 때 `ValueError`
 
 ## 3. EasierlitClient
@@ -106,9 +110,15 @@ run(app: EasierlitApp) -> None
 - `dispatch_incoming(...)` 기반 입력 디스패치 활성화
 - 입력마다 daemon thread 1개로 on_message 실행
 - 같은 `thread_id`는 직렬, 다른 `thread_id`는 `max_message_workers` 범위 내 병렬 실행
+- async awaitable 실행은 역할별로 분리됨
+- `run_func` awaitable은 전용 내부 이벤트 루프 runner 1개를 사용
+- `on_message` awaitable은 `min(max_message_workers, 8)` 크기의 thread-aware runner pool을 사용
+- 같은 `thread_id`는 동일한 `on_message` runner lane으로 라우팅
+- CPU-bound Python 핸들러는 여전히 GIL 경쟁이 있으므로, 이번 최적화는 awaitable/I/O 중심 경로에서 효과가 큼
 - `run_func`마다 daemon thread 워커 1개씩 시작
 - 동일한 app 인스턴스로 각 `run_func(app)` 실행
 - 처리되지 않은 워커 예외 traceback 저장 후 app 종료(fail-fast)
+- 동작 변경(Breaking): 처리되지 않은 `on_message` 예외도 `run_func`와 동일하게 fail-fast 처리
 - 특정 `run_func`의 정상 종료는 다른 워커를 중지시키지 않음
 
 예외:
@@ -190,6 +200,7 @@ add_message(
 - `elements`로 전달된 Chainlit element 객체(이미지/파일 등)를 runtime으로 전달
 - 생성된 `message_id` 반환
 - 실제 반영은 runtime dispatcher에서 수행
+- runtime dispatcher는 같은 `thread_id` 내 outgoing 순서는 보장하지만 thread 간 전역 outgoing 순서는 보장하지 않음
 
 ### 4.3 `EasierlitApp.add_tool`
 
@@ -536,7 +547,7 @@ OutgoingCommand(
 |---|---|---|
 | `AppClosedError` | app 종료 후 incoming dispatch 또는 enqueue 시도 | 처리 중단 후 필요 시 서버 재시작 |
 | `WorkerAlreadyRunningError` | 실행 중인 워커에서 `client.run()` 재호출 | 먼저 `client.stop()` |
-| `RunFuncExecutionError` | `run_func` 미처리 예외 | traceback 확인 후 run_func 로직 수정 |
+| `RunFuncExecutionError` | 워커 미처리 예외 | traceback 확인 후 `run_func`/`on_message` 로직 수정 |
 | `DataPersistenceNotEnabledError` | data layer 없는 상태에서 thread CRUD 호출 | persistence/data layer 설정 |
 | `ThreadSessionNotActiveError` | session/data layer 모두 없는 상태에서 메시지 command 적용 | 활성 session 유지 또는 persistence 설정 |
 | `RuntimeError` | `new_thread()`가 재시도 후에도 고유 id 할당 실패 | id 생성/충돌 상황 점검 후 재시도 |

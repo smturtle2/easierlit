@@ -32,6 +32,7 @@ class EasierlitServer:
         host: str = "127.0.0.1",
         port: int = 8000,
         root_path: str = "",
+        max_outgoing_workers: int = 4,
         auth: EasierlitAuthConfig | None = None,
         persistence: EasierlitPersistenceConfig | None = None,
         discord: EasierlitDiscordConfig | None = None,
@@ -44,6 +45,9 @@ class EasierlitServer:
         self.host = host
         self.port = port
         self.root_path = root_path
+        if not isinstance(max_outgoing_workers, int) or max_outgoing_workers < 1:
+            raise ValueError("max_outgoing_workers must be an integer >= 1.")
+        self.max_outgoing_workers = max_outgoing_workers
         self.auth = self._resolve_auth(auth)
         self.persistence = (
             persistence if persistence is not None else EasierlitPersistenceConfig()
@@ -74,16 +78,17 @@ class EasierlitServer:
             auth=self.auth,
             persistence=self.persistence,
             discord_token=resolved_discord_token,
+            max_outgoing_workers=self.max_outgoing_workers,
         )
 
         def _handle_worker_crash(traceback_text: str) -> None:
-            summary = "Unknown run_func error"
+            summary = "Unknown worker error"
             lines = traceback_text.strip().splitlines()
             if lines:
                 summary = lines[-1]
 
-            LOGGER.error("run_func crashed: %s", summary)
-            LOGGER.error("run_func traceback:\n%s", traceback_text)
+            LOGGER.error("worker crashed: %s", summary)
+            LOGGER.error("worker traceback:\n%s", traceback_text)
 
             if shutdown_requested.is_set():
                 return

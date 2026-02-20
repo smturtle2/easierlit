@@ -18,6 +18,91 @@ RunFuncMode = Literal["auto", "sync", "async"]
 LOGGER = logging.getLogger(__name__)
 
 
+class AsyncAwaitableRunner:
+    def __init__(self) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._ready.clear()
+            self._thread = threading.Thread(target=self._thread_entry, daemon=True)
+            self._thread.start()
+
+        if not self._ready.wait(timeout=5.0):
+            raise RuntimeError("Failed to start async awaitable runner loop.")
+
+    def stop(self, timeout: float = 2.0) -> None:
+        with self._lock:
+            loop = self._loop
+            thread = self._thread
+
+        if loop is not None and loop.is_running():
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except RuntimeError:
+                pass
+
+        if thread is not None:
+            thread.join(timeout=timeout)
+
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._thread = None
+            self._loop = None
+
+    def is_running(self) -> bool:
+        with self._lock:
+            loop = self._loop
+            return loop is not None and loop.is_running()
+
+    def run_awaitable(self, awaitable: Any) -> Any:
+        with self._lock:
+            loop = self._loop
+
+        if loop is None or not loop.is_running():
+            raise RuntimeError("Async awaitable runner loop is not running.")
+
+        if inspect.iscoroutine(awaitable):
+            coroutine = awaitable
+        else:
+
+            async def _await_result() -> Any:
+                return await awaitable
+
+            coroutine = _await_result()
+
+        future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+        return future.result()
+
+    def _thread_entry(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        with self._lock:
+            self._loop = loop
+        self._ready.set()
+
+        try:
+            loop.run_forever()
+        finally:
+            pending_tasks = asyncio.all_tasks(loop)
+            for pending_task in pending_tasks:
+                pending_task.cancel()
+            if pending_tasks:
+                loop.run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+            with self._lock:
+                if self._thread is threading.current_thread():
+                    self._thread = None
+                self._loop = None
+
+
 def _close_unawaited_awaitable(value: Any) -> None:
     close = getattr(value, "close", None)
     if callable(close):
@@ -34,7 +119,14 @@ def _close_unawaited_awaitable(value: Any) -> None:
             pass
 
 
-def _run_awaitable(awaitable: Any) -> None:
+def _run_awaitable(awaitable: Any, awaitable_runner: AsyncAwaitableRunner) -> None:
+    if awaitable_runner.is_running():
+        try:
+            awaitable_runner.run_awaitable(awaitable)
+            return
+        except RuntimeError:
+            pass
+
     if inspect.iscoroutine(awaitable):
         asyncio.run(awaitable)
         return
@@ -49,6 +141,7 @@ def _execute_run_func(
     run_func: Callable[[EasierlitApp], Any],
     app: EasierlitApp,
     run_func_mode: RunFuncMode,
+    awaitable_runner: AsyncAwaitableRunner,
 ) -> None:
     result = run_func(app)
     is_awaitable = inspect.isawaitable(result)
@@ -67,21 +160,22 @@ def _execute_run_func(
             raise TypeError(
                 "run_func_mode='async' requires run_func to return an awaitable."
             )
-        _run_awaitable(result)
+        _run_awaitable(result, awaitable_runner)
         return
 
     if is_awaitable:
-        _run_awaitable(result)
+        _run_awaitable(result, awaitable_runner)
 
 
 def _execute_on_message(
     on_message: Callable[[EasierlitApp, IncomingMessage], Any],
     app: EasierlitApp,
     incoming: IncomingMessage,
+    awaitable_runner: AsyncAwaitableRunner,
 ) -> None:
     result = on_message(app, incoming)
     if inspect.isawaitable(result):
-        _run_awaitable(result)
+        _run_awaitable(result, awaitable_runner)
 
 
 class EasierlitClient:
@@ -130,12 +224,18 @@ class EasierlitClient:
         self._active_message_worker_count = 0
         self._inflight_message_workers: set[threading.Thread] = set()
         self._accept_incoming_messages = False
+        self._run_func_awaitable_runner = AsyncAwaitableRunner()
+        message_runner_count = min(self.max_message_workers, 8)
+        self._message_awaitable_runners = [
+            AsyncAwaitableRunner() for _ in range(message_runner_count)
+        ]
 
     def run(self, app: EasierlitApp) -> None:
         if self._is_worker_running():
             raise WorkerAlreadyRunningError("run() called while worker is already running.")
 
         self._reset_worker_error_state()
+        self._start_awaitable_runners()
         self._app = app
 
         with self._message_scheduler_lock:
@@ -162,6 +262,7 @@ class EasierlitClient:
             self._threads = []
 
         self._app = None
+        self._stop_awaitable_runners(timeout=timeout)
         self._raise_worker_error_if_any()
 
     def dispatch_incoming(self, incoming: IncomingMessage) -> None:
@@ -199,28 +300,36 @@ class EasierlitClient:
         run_func: Callable[[EasierlitApp], Any],
     ) -> None:
         try:
-            _execute_run_func(run_func, app, self.run_func_mode)
+            _execute_run_func(
+                run_func,
+                app,
+                self.run_func_mode,
+                self._run_func_awaitable_runner,
+            )
         except Exception:
             traceback_text = traceback.format_exc()
-            self._thread_error_queue.put(traceback_text)
-            self._record_worker_error(traceback_text)
-            app.close()
+            self._handle_fatal_worker_failure(
+                source="run_func",
+                traceback_text=traceback_text,
+                app=app,
+            )
 
     def _message_worker_entry(self, app: EasierlitApp, incoming: IncomingMessage) -> None:
+        awaitable_runner = self._resolve_message_awaitable_runner(incoming.thread_id)
         try:
             app.start_thread_task(incoming.thread_id)
-            _execute_on_message(self.on_message, app, incoming)
+            _execute_on_message(
+                self.on_message,
+                app,
+                incoming,
+                awaitable_runner,
+            )
         except Exception:
             traceback_text = traceback.format_exc()
-            LOGGER.exception(
-                "on_message handler failed for thread '%s' message '%s'.",
-                incoming.thread_id,
-                incoming.message_id,
-            )
-            self._emit_on_message_failure_notice(
-                app=app,
-                thread_id=incoming.thread_id,
+            self._handle_fatal_worker_failure(
+                source="on_message",
                 traceback_text=traceback_text,
+                app=app,
             )
         finally:
             try:
@@ -239,32 +348,72 @@ class EasierlitClient:
                 if current_app is not None:
                     self._schedule_pending_messages_locked(current_app)
 
-    def _emit_on_message_failure_notice(
+    def _handle_fatal_worker_failure(
         self,
         *,
-        app: EasierlitApp,
-        thread_id: str,
+        source: str,
         traceback_text: str,
+        app: EasierlitApp,
     ) -> None:
-        summary = "Unknown on_message error"
+        summary = self._summarize_traceback(traceback_text)
+        LOGGER.error("%s crashed: %s", source, summary)
+        try:
+            self._thread_error_queue.put_nowait(traceback_text)
+        except Exception:
+            pass
+
+        self._record_worker_error(traceback_text)
+        with self._message_scheduler_lock:
+            self._accept_incoming_messages = False
+            self._pending_messages_by_thread.clear()
+        app.close()
+
+    def _summarize_traceback(self, traceback_text: str) -> str:
         lines = [line.strip() for line in traceback_text.strip().splitlines() if line.strip()]
         if lines:
-            summary = lines[-1]
+            return lines[-1]
+        return "Unknown worker error"
 
+    def _start_awaitable_runners(self) -> None:
+        started_runners: list[AsyncAwaitableRunner] = []
         try:
-            app.add_message(
-                thread_id=thread_id,
-                content=(
-                    "Internal on_message error detected.\n"
-                    f"Reason: {summary}"
-                ),
-                author="Easierlit",
-            )
+            self._run_func_awaitable_runner.start()
+            started_runners.append(self._run_func_awaitable_runner)
+            for awaitable_runner in self._message_awaitable_runners:
+                awaitable_runner.start()
+                started_runners.append(awaitable_runner)
         except Exception:
-            LOGGER.exception(
-                "Failed to enqueue on_message failure notice for thread '%s'.",
-                thread_id,
-            )
+            for started_runner in reversed(started_runners):
+                try:
+                    started_runner.stop(timeout=1.0)
+                except Exception:
+                    LOGGER.exception("Failed to stop partially started awaitable runner.")
+            raise
+
+    def _stop_awaitable_runners(self, *, timeout: float) -> None:
+        for awaitable_runner in self._message_awaitable_runners:
+            try:
+                awaitable_runner.stop(timeout=timeout)
+            except Exception:
+                LOGGER.exception("Failed to stop message awaitable runner cleanly.")
+        try:
+            self._run_func_awaitable_runner.stop(timeout=timeout)
+        except Exception:
+            LOGGER.exception("Failed to stop run_func awaitable runner cleanly.")
+
+    def _resolve_message_awaitable_runner(self, thread_id: str) -> AsyncAwaitableRunner:
+        if not self._message_awaitable_runners:
+            return self._run_func_awaitable_runner
+        runner_index = self._resolve_message_awaitable_runner_index(thread_id)
+        return self._message_awaitable_runners[runner_index]
+
+    def _resolve_message_awaitable_runner_index(self, thread_id: str | None) -> int:
+        runner_count = len(self._message_awaitable_runners)
+        if runner_count < 2:
+            return 0
+        if not thread_id:
+            return 0
+        return hash(thread_id) % runner_count
 
     def _schedule_pending_messages_locked(self, app: EasierlitApp) -> None:
         if not self._accept_incoming_messages:

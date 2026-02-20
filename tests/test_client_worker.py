@@ -1,3 +1,4 @@
+import asyncio
 import gc
 import threading
 import time
@@ -135,6 +136,81 @@ def test_dispatch_incoming_async_handler_enqueues_output():
     client.stop()
 
 
+def test_async_on_message_execution_does_not_call_asyncio_run(monkeypatch):
+    app = EasierlitApp()
+    asyncio_run_calls = 0
+
+    def _forbid_asyncio_run(_awaitable):
+        nonlocal asyncio_run_calls
+        asyncio_run_calls += 1
+        raise AssertionError("asyncio.run() should not be used for async on_message execution.")
+
+    monkeypatch.setattr("easierlit.client.asyncio.run", _forbid_asyncio_run)
+
+    async def _on_message(app: EasierlitApp, incoming: IncomingMessage) -> None:
+        app.add_message(incoming.thread_id, incoming.content.upper(), author="Worker")
+
+    client = EasierlitClient(on_message=_on_message)
+    client.run(app)
+    client.dispatch_incoming(_incoming(thread_id="thread-3", message_id="msg-3", content="hey"))
+
+    command = app._pop_outgoing(timeout=2.0)
+    assert command.command == "add_message"
+    assert command.content == "HEY"
+
+    client.stop()
+    assert asyncio_run_calls == 0
+
+
+def test_async_await_busy_message_blocks_when_worker_slots_are_exhausted():
+    app = EasierlitApp()
+    busy_started = threading.Event()
+    quick_started = threading.Event()
+
+    async def _on_message(_app: EasierlitApp, incoming: IncomingMessage) -> None:
+        if incoming.content == "busy":
+            busy_started.set()
+            await asyncio.sleep(0.4)
+            return
+        quick_started.set()
+
+    client = EasierlitClient(on_message=_on_message, max_message_workers=1)
+    client.run(app)
+
+    client.dispatch_incoming(_incoming(thread_id="thread-busy", message_id="msg-1", content="busy"))
+    assert busy_started.wait(timeout=1.0)
+
+    client.dispatch_incoming(_incoming(thread_id="thread-quick", message_id="msg-2", content="quick"))
+    assert quick_started.wait(timeout=0.15) is False
+    assert quick_started.wait(timeout=1.0) is True
+
+    client.stop()
+
+
+def test_async_await_busy_message_does_not_block_when_worker_slot_is_available():
+    app = EasierlitApp()
+    busy_started = threading.Event()
+    quick_started = threading.Event()
+
+    async def _on_message(_app: EasierlitApp, incoming: IncomingMessage) -> None:
+        if incoming.content == "busy":
+            busy_started.set()
+            await asyncio.sleep(0.4)
+            return
+        quick_started.set()
+
+    client = EasierlitClient(on_message=_on_message, max_message_workers=2)
+    client.run(app)
+
+    client.dispatch_incoming(_incoming(thread_id="thread-busy", message_id="msg-1", content="busy"))
+    assert busy_started.wait(timeout=1.0)
+
+    client.dispatch_incoming(_incoming(thread_id="thread-quick", message_id="msg-2", content="quick"))
+    assert quick_started.wait(timeout=0.2)
+
+    client.stop()
+
+
 def test_same_chat_messages_execute_serially():
     app = EasierlitApp()
     gate = threading.Event()
@@ -244,32 +320,120 @@ def test_max_message_workers_limits_parallelism():
     client.stop()
 
 
-def test_on_message_exception_is_isolated_and_emits_notice():
+def test_on_message_exception_is_fatal_and_invokes_crash_handler():
     app = EasierlitApp()
+    crash_event = threading.Event()
+    crash_payloads: list[str] = []
 
-    def _on_message(app: EasierlitApp, incoming: IncomingMessage) -> None:
+    def _on_message(_app: EasierlitApp, incoming: IncomingMessage) -> None:
         if incoming.content == "bad":
             raise RuntimeError("boom")
-        app.add_message(incoming.thread_id, incoming.content.upper(), author="Worker")
 
     client = EasierlitClient(on_message=_on_message)
+    client.set_worker_crash_handler(
+        lambda traceback_text: (
+            crash_payloads.append(traceback_text),
+            crash_event.set(),
+        )
+    )
     client.run(app)
 
     client.dispatch_incoming(_incoming(thread_id="thread-1", message_id="msg-1", content="bad"))
-    client.dispatch_incoming(_incoming(thread_id="thread-1", message_id="msg-2", content="ok"))
+    assert crash_event.wait(timeout=2.0)
+    for _ in range(50):
+        if app.is_closed():
+            break
+        time.sleep(0.01)
 
-    notice = app._pop_outgoing(timeout=2.0)
-    success = app._pop_outgoing(timeout=2.0)
+    assert app.is_closed() is True
+    with pytest.raises(AppClosedError):
+        client.dispatch_incoming(_incoming(thread_id="thread-1", message_id="msg-2", content="ok"))
 
-    assert notice.command == "add_message"
-    assert notice.author == "Easierlit"
-    assert "Internal on_message error detected" in (notice.content or "")
+    with pytest.raises(RunFuncExecutionError):
+        client.stop()
+    assert len(crash_payloads) == 1
+    assert "RuntimeError: boom" in crash_payloads[0]
 
-    assert success.command == "add_message"
-    assert success.content == "OK"
-    assert app.is_closed() is False
 
-    client.stop()
+def test_run_func_blocking_async_does_not_block_async_on_message():
+    app = EasierlitApp()
+    run_func_started = threading.Event()
+    release_run_func = threading.Event()
+
+    async def _run_func(_app: EasierlitApp) -> None:
+        run_func_started.set()
+        while not release_run_func.is_set():
+            time.sleep(0.01)
+
+    async def _on_message(app: EasierlitApp, incoming: IncomingMessage) -> None:
+        app.add_message(incoming.thread_id, incoming.content.upper(), author="Worker")
+
+    client = EasierlitClient(on_message=_on_message, run_funcs=[_run_func], max_message_workers=4)
+    try:
+        client.run(app)
+        assert run_func_started.wait(timeout=1.0)
+
+        started_at = time.perf_counter()
+        client.dispatch_incoming(_incoming(thread_id="thread-1", message_id="msg-1", content="ok"))
+        command = app._pop_outgoing(timeout=2.0)
+        elapsed = time.perf_counter() - started_at
+
+        assert command.command == "add_message"
+        assert command.content == "OK"
+        assert elapsed < 0.3
+    finally:
+        release_run_func.set()
+        client.stop()
+
+
+def test_blocking_async_on_message_isolated_to_its_runner_lane():
+    app = EasierlitApp()
+    release_slow = threading.Event()
+    slow_started = threading.Event()
+    fast_started = threading.Event()
+    slow_thread_id = "thread-slow"
+
+    async def _on_message(app: EasierlitApp, incoming: IncomingMessage) -> None:
+        if incoming.thread_id == slow_thread_id:
+            slow_started.set()
+            while not release_slow.is_set():
+                time.sleep(0.01)
+            app.add_message(incoming.thread_id, "SLOW_DONE", author="Worker")
+            return
+
+        fast_started.set()
+        app.add_message(incoming.thread_id, "FAST_DONE", author="Worker")
+
+    client = EasierlitClient(on_message=_on_message, max_message_workers=8)
+    runner_count = len(client._message_awaitable_runners)
+    assert runner_count == 8
+    slow_runner_index = client._resolve_message_awaitable_runner_index(slow_thread_id)
+
+    fast_thread_id = None
+    for index in range(256):
+        candidate = f"thread-fast-{index}"
+        if client._resolve_message_awaitable_runner_index(candidate) != slow_runner_index:
+            fast_thread_id = candidate
+            break
+    assert fast_thread_id is not None
+
+    try:
+        client.run(app)
+
+        client.dispatch_incoming(_incoming(thread_id=slow_thread_id, message_id="msg-slow", content="slow"))
+        assert slow_started.wait(timeout=1.0)
+
+        started_at = time.perf_counter()
+        client.dispatch_incoming(_incoming(thread_id=fast_thread_id, message_id="msg-fast", content="fast"))
+        assert fast_started.wait(timeout=0.3)
+        fast_elapsed = time.perf_counter() - started_at
+
+        fast_command = app._pop_outgoing(timeout=2.0)
+        assert fast_command.content == "FAST_DONE"
+        assert fast_elapsed < 0.3
+    finally:
+        release_slow.set()
+        client.stop()
 
 
 def test_stop_does_not_wait_for_inflight_message_workers():

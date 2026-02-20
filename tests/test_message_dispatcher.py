@@ -1,7 +1,9 @@
 import threading
 import time
 
-from easierlit import EasierlitApp, EasierlitClient, IncomingMessage
+import pytest
+
+from easierlit import EasierlitApp, EasierlitClient, IncomingMessage, RunFuncExecutionError
 
 
 
@@ -112,7 +114,7 @@ def test_dispatcher_auto_manages_thread_task_state():
 
 
 
-def test_dispatcher_isolates_handler_errors_and_continues():
+def test_dispatcher_treats_handler_errors_as_fatal():
     app = EasierlitApp()
 
     def on_message(_app: EasierlitApp, incoming: IncomingMessage) -> None:
@@ -124,13 +126,11 @@ def test_dispatcher_isolates_handler_errors_and_continues():
     client.run(app)
 
     client.dispatch_incoming(_incoming("thread-1", "msg-1", "bad"))
-    client.dispatch_incoming(_incoming("thread-1", "msg-2", "ok"))
+    for _ in range(50):
+        if app.is_closed():
+            break
+        time.sleep(0.01)
 
-    notice = app._pop_outgoing(timeout=2.0)
-    success = app._pop_outgoing(timeout=2.0)
-
-    assert notice.author == "Easierlit"
-    assert "Internal on_message error detected" in (notice.content or "")
-    assert success.content == "OK"
-
-    client.stop()
+    assert app.is_closed() is True
+    with pytest.raises(RunFuncExecutionError):
+        client.stop()

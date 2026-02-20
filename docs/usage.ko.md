@@ -52,6 +52,8 @@ server.serve()
 - `on_message`는 sync/async 모두 지원합니다.
 - `run_funcs`는 선택적 백그라운드 워커로 사용할 수 있습니다.
 - 기본값 `run_func_mode="auto"`가 각 함수의 실행 타입을 자동 판별합니다.
+- async awaitable은 전용 이벤트 루프 runner에서 실행되어 메시지마다 `asyncio.run(...)` loop 생성/종료 오버헤드를 줄입니다.
+- CPU-bound Python 코드는 여전히 GIL을 공유하므로, CPU를 완전히 분리하려면 프로세스 단위 offloading이 필요합니다.
 
 ## 4. 공개 API 시그니처
 
@@ -63,6 +65,7 @@ EasierlitServer(
     host="127.0.0.1",
     port=8000,
     root_path="",
+    max_outgoing_workers=4,
     auth=None,
     persistence=None,
     discord=None,
@@ -116,8 +119,14 @@ Easierlit 서버는 다음 기본값을 강제합니다.
 - `CHAINLIT_AUTH_SECRET`가 32바이트 미만이면 해당 실행에서 안전한 시크릿으로 자동 대체하고, 미설정이면 `.chainlit/jwt.secret`를 자동 관리
 - 종료 시 Easierlit이 `CHAINLIT_AUTH_COOKIE_NAME`/`CHAINLIT_AUTH_SECRET`를 이전 값으로 복원
 - `UVICORN_WS_PROTOCOL`이 비어 있으면 `websockets-sansio`를 기본값으로 사용
-- `run_func` fail-fast: 어떤 워커에서든 예외 발생 시 서버 종료 트리거
+- 워커 fail-fast: `run_func` 또는 `on_message` 예외 발생 시 서버 종료 트리거
+- outgoing dispatcher는 thread-aware 병렬 lane(`max_outgoing_workers`, 기본 `4`)으로 동작
+- outgoing 순서는 같은 `thread_id` 안에서만 보장되며 thread 간 전역 순서는 의도적으로 보장하지 않음
 - `discord=EasierlitDiscordConfig(...)`를 전달하지 않으면 Discord bridge는 기본 비활성
+- async awaitable 실행은 역할별로 분리됩니다.
+- `run_func` awaitable은 전용 runner loop를 사용합니다.
+- `on_message` awaitable은 `min(max_message_workers, 8)` 크기의 thread-aware runner pool을 사용합니다.
+- 같은 `thread_id`는 동일한 message runner lane에 고정됩니다.
 
 ## 6. 인증, 영속성, Discord
 
@@ -205,17 +214,12 @@ Thread History 표시 조건(Chainlit 정책):
 3. 출력/저장은 `app.*` API로만 수행합니다.
 4. 명령 단위 예외는 문맥을 붙여 로그 가독성 확보
 
-`on_message`에서 처리되지 않은 예외가 발생하면:
-
-- Easierlit가 traceback을 로그에 남김
-- 같은 thread에 짧은 에러 안내 메시지를 보냄
-- 서버는 계속 동작하며 다음 메시지를 처리함
-
-백그라운드 `run_func`에서 처리되지 않은 예외가 발생하면:
+`on_message` 또는 백그라운드 `run_func`에서 처리되지 않은 예외가 발생하면:
 
 - Easierlit가 traceback을 로그에 남김
 - 서버 종료를 트리거함
 - 종료 진행 중 입력 dispatch는 요약 메시지 방식으로 억제
+- 동작 변경(Breaking): `on_message`는 더 이상 내부 안내 메시지를 보내고 계속 진행하지 않음
 
 외부 in-process 입력:
 
@@ -274,6 +278,7 @@ Thread 작업 상태 API:
 2. session이 비활성이고 data layer가 있으면 persistence fallback 수행
 3. fallback 전에 내부 HTTP Chainlit context를 초기화
 4. session/data layer 모두 없으면 queued command 적용 시 `ThreadSessionNotActiveError` 발생
+5. outgoing command는 `thread_id` lane 단위로 병렬 처리되며 같은 thread 순서는 유지되고 thread 간 완료 순서는 달라질 수 있음
 
 ## 10. run_func에서 새 thread 생성
 

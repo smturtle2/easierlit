@@ -137,6 +137,7 @@ EasierlitServer(
     host="127.0.0.1",
     port=8000,
     root_path="",
+    max_outgoing_workers=4,
     auth=None,
     persistence=None,
     discord=None,
@@ -266,6 +267,12 @@ Thread 작업 상태 API:
 - `app.end_thread_task(...)`는 해당 thread의 작업 중(UI indicator) 상태를 해제합니다.
 - `app.is_thread_task_running(...)`는 thread 작업 중 상태를 반환합니다.
 - Easierlit은 각 `on_message` 실행 구간에서 thread 작업 상태를 자동으로 관리합니다.
+- async awaitable 실행은 역할별로 분리됩니다.
+- `run_func` awaitable은 전용 runner loop에서 실행됩니다.
+- `on_message` awaitable은 `min(max_message_workers, 8)` 크기의 thread-aware runner pool에서 실행됩니다.
+- 같은 `thread_id`는 동일한 `on_message` runner lane에 고정됩니다.
+- runtime outgoing dispatcher는 thread-aware 병렬 lane을 사용합니다. 같은 `thread_id`의 순서는 유지되지만 thread 간 전역 outgoing 순서는 보장하지 않습니다.
+- CPU-bound Python 핸들러는 여전히 GIL을 공유하므로, CPU 격리가 필요하면 프로세스 단위 offloading이 필요합니다.
 - `app.get_messages(...)`은 thread 메타데이터와 순서 보존 `messages` 단일 목록을 반환합니다.
 - `app.get_messages(...)`은 `user_message`/`assistant_message`/`system_message`/`tool`만 포함하고 run 계열 step은 제외합니다.
 - `app.get_messages(...)`은 `thread["elements"]`를 `forId` 별칭(`forId`/`for_id`/`stepId`/`step_id`) 기준으로 각 message에 매핑합니다.
@@ -282,7 +289,7 @@ Thread 작업 상태 API:
 
 Easierlit은 워커 크래시에 대해 fail-fast 정책을 사용합니다.
 
-- 어떤 `run_func`에서든 예외 발생 시 서버 종료 트리거
+- 어떤 `run_func` 또는 `on_message`에서든 예외 발생 시 서버 종료 트리거
 - 가능하면 UI에 요약 메시지 표시
 - 전체 traceback은 서버 로그에 기록
 
@@ -331,3 +338,4 @@ API 변경:
 - `send(...)` 제거
 - 메시지 표준 API를 `add_message(...)`로 전환
 - 도구/추론 API 추가: `add_tool(...)`, `add_thought(...)`, `update_tool(...)`, `update_thought(...)`
+- 동작 변경(Breaking): `on_message` 예외는 이제 `run_func`와 동일하게 fail-fast로 처리되며, 내부 안내 메시지를 띄우고 계속 진행하지 않습니다.

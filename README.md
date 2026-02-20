@@ -137,6 +137,7 @@ EasierlitServer(
     host="127.0.0.1",
     port=8000,
     root_path="",
+    max_outgoing_workers=4,
     auth=None,
     persistence=None,
     discord=None,
@@ -266,6 +267,12 @@ Behavior highlights:
 - `app.end_thread_task(...)` clears working state (UI task indicator).
 - `app.is_thread_task_running(...)` returns current thread working state.
 - Easierlit auto-manages thread task state around each `on_message` execution.
+- Async awaitable execution is isolated by role:
+- `run_func` awaitables run on a dedicated runner loop.
+- `on_message` awaitables run on a thread-aware runner pool sized as `min(max_message_workers, 8)`.
+- Same `thread_id` is pinned to the same `on_message` runner lane.
+- Runtime outgoing dispatcher uses thread-aware parallel lanes: same `thread_id` order is preserved, but global cross-thread outgoing order is not guaranteed.
+- CPU-bound Python handlers still share the GIL; use process-level offloading when true CPU isolation is required.
 - `app.get_messages(...)` returns thread metadata plus one ordered `messages` list.
 - `app.get_messages(...)` includes `user_message`/`assistant_message`/`system_message`/`tool` and excludes run-family steps.
 - `app.get_messages(...)` maps `thread["elements"]` into each message via `forId` aliases (`forId`/`for_id`/`stepId`/`step_id`).
@@ -282,7 +289,7 @@ Behavior highlights:
 
 Easierlit uses fail-fast behavior for worker crashes.
 
-- If any `run_func` raises, server shutdown is triggered.
+- If any `run_func` or `on_message` raises, server shutdown is triggered.
 - UI gets a short summary when possible.
 - Full traceback is kept in server logs.
 
@@ -331,3 +338,4 @@ API updates:
 - `send(...)` was removed.
 - `add_message(...)` is now the canonical message API.
 - Added tool/thought APIs: `add_tool(...)`, `add_thought(...)`, `update_tool(...)`, `update_thought(...)`.
+- Breaking behavior: `on_message` exceptions are now fail-fast (same as `run_func`) and no longer emit an internal notice then continue.
