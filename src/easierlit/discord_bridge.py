@@ -6,7 +6,7 @@ import logging
 import re
 import uuid
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
 import discord
 from chainlit.config import config
@@ -26,14 +26,6 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 _USER_PREFIX = "discord_"
-_OWNER_REBIND_RETRY_DELAYS_SECONDS = (0.0, 0.1, 0.3)
-
-
-class _ThreadSnapshot(NamedTuple):
-    thread_exists: bool
-    owner_user_id: str | None
-    metadata: dict[str, object]
-    owner_observable: bool
 
 
 class EasierlitDiscordBridge:
@@ -182,9 +174,9 @@ class EasierlitDiscordBridge:
             return thread_id, thread_name, channel, bind_thread_to_user
 
         if isinstance(channel, discord.TextChannel):
-            thread_id = self._build_channel_thread_id(channel.id)
             discord_thread_name = self._clean_content(message)[:100] or "Untitled"
             thread_channel = await channel.create_thread(name=discord_thread_name, message=message)
+            thread_id = self._build_channel_thread_id(thread_channel.id)
             thread_name = f"{thread_channel.name}"
             return thread_id, thread_name, thread_channel, bind_thread_to_user
 
@@ -489,6 +481,13 @@ class EasierlitDiscordBridge:
         if data_layer is None:
             return
 
+        thread_record = await self._read_existing_thread_record(
+            data_layer=data_layer,
+            thread_id=thread_id,
+        )
+        metadata = self._extract_thread_metadata(thread_record)
+        existing_owner_user_id = self._extract_thread_owner_user_id(thread_record)
+
         owner_user_id = resolved_owner_user_id
         if owner_user_id is None:
             runtime_owner_user_id = await self._resolve_runtime_auth_owner_user_id(data_layer)
@@ -497,279 +496,68 @@ class EasierlitDiscordBridge:
                 bind_thread_to_user=bind_thread_to_user,
                 discord_user=discord_user,
             )
-
-        snapshot = await self._read_thread_snapshot(data_layer=data_layer, thread_id=thread_id)
-        thread_exists = False
-        metadata: dict[str, object] = {}
-        if snapshot is not None:
-            thread_exists = snapshot.thread_exists
-            metadata.update(snapshot.metadata)
-        else:
+        if owner_user_id is None:
+            owner_user_id = existing_owner_user_id
+        if owner_user_id is None:
             LOGGER.warning(
-                "Failed to inspect existing Discord thread '%s' before owner upsert.",
+                "Skipping Discord thread owner update for '%s': owner could not be resolved.",
                 thread_id,
             )
-
-        if not thread_exists:
-            await self._ensure_thread_row_for_listing(
-                data_layer=data_layer,
-                thread_id=thread_id,
-                user_id=owner_user_id,
-                thread_name=thread_name,
-            )
+            return
 
         if isinstance(session_metadata, dict):
             metadata.update(session_metadata)
         metadata.update(self._extract_discord_owner_metadata(message))
 
+        await self._update_thread_owner(
+            data_layer=data_layer,
+            thread_id=thread_id,
+            owner_user_id=owner_user_id,
+            thread_name=thread_name,
+            metadata=metadata if metadata else None,
+        )
+
+    async def _update_thread_owner(
+        self,
+        *,
+        data_layer: object,
+        thread_id: str,
+        owner_user_id: str,
+        thread_name: str | None,
+        metadata: dict[str, object] | None,
+    ) -> None:
         update_kwargs: dict[str, object] = {
             "thread_id": thread_id,
-            "metadata": metadata if metadata else None,
+            "user_id": owner_user_id,
+            "metadata": metadata,
         }
-        if owner_user_id is not None:
-            update_kwargs["user_id"] = owner_user_id
         if isinstance(thread_name, str) and thread_name.strip():
             update_kwargs["name"] = thread_name
 
-        await self._upsert_thread_with_owner_verification(
-            data_layer=data_layer,
-            thread_id=thread_id,
-            update_kwargs=update_kwargs,
-            expected_owner_user_id=owner_user_id,
-        )
-
-    async def _upsert_thread_with_owner_verification(
-        self,
-        *,
-        data_layer: object,
-        thread_id: str,
-        update_kwargs: dict[str, object],
-        expected_owner_user_id: str | None,
-    ) -> None:
-        if expected_owner_user_id is None:
-            retry_delays = (0.0,)
-        else:
-            retry_delays = _OWNER_REBIND_RETRY_DELAYS_SECONDS
-
-        last_observed_owner_user_id: str | None = None
-        for attempt_index, delay_seconds in enumerate(retry_delays, start=1):
-            if delay_seconds > 0:
-                await asyncio.sleep(delay_seconds)
-
-            try:
-                await data_layer.update_thread(**update_kwargs)
-            except Exception:
-                LOGGER.warning(
-                    "Failed to upsert Discord thread '%s' owner metadata (attempt %d/%d).",
-                    thread_id,
-                    attempt_index,
-                    len(retry_delays),
-                )
-                continue
-
-            if expected_owner_user_id is None:
-                return
-
-            snapshot = await self._read_thread_snapshot(data_layer=data_layer, thread_id=thread_id)
-            if snapshot is None:
-                LOGGER.warning(
-                    "Skipping Discord thread owner verification for thread '%s': lookup unavailable.",
-                    thread_id,
-                )
-                return
-
-            if not snapshot.owner_observable:
-                LOGGER.warning(
-                    "Skipping Discord thread owner verification for thread '%s': owner field unavailable.",
-                    thread_id,
-                )
-                return
-
-            if snapshot.thread_exists:
-                last_observed_owner_user_id = snapshot.owner_user_id
-                if snapshot.owner_user_id == expected_owner_user_id:
-                    self._cached_runtime_auth_owner_user_id = expected_owner_user_id
-                    return
-            else:
-                last_observed_owner_user_id = None
-
-        if expected_owner_user_id is not None:
-            LOGGER.warning(
-                "Discord thread owner verification failed: thread_id=%s expected_owner_user_id=%s observed_owner_user_id=%s attempts=%d",
-                thread_id,
-                expected_owner_user_id,
-                last_observed_owner_user_id,
-                len(retry_delays),
-            )
-
-    async def _read_thread_snapshot(
-        self,
-        *,
-        data_layer: object,
-        thread_id: str,
-    ) -> _ThreadSnapshot | None:
-        sql_supported, sql_snapshot = await self._read_thread_snapshot_via_execute_sql(
-            data_layer=data_layer,
-            thread_id=thread_id,
-        )
-        if sql_snapshot is not None:
-            return sql_snapshot
-        if sql_supported:
-            LOGGER.warning(
-                "Falling back to alternate Discord thread lookup for '%s' after execute_sql failure.",
-                thread_id,
-            )
-
-        query_supported, query_snapshot = await self._read_thread_snapshot_via_execute_query(
-            data_layer=data_layer,
-            thread_id=thread_id,
-        )
-        if query_snapshot is not None:
-            return query_snapshot
-        if query_supported:
-            LOGGER.warning(
-                "Falling back to get_thread lookup for '%s' after execute_query failure.",
-                thread_id,
-            )
-
-        return await self._read_thread_snapshot_via_get_thread(
-            data_layer=data_layer,
-            thread_id=thread_id,
-        )
-
-    async def _read_thread_snapshot_via_execute_sql(
-        self,
-        *,
-        data_layer: object,
-        thread_id: str,
-    ) -> tuple[bool, _ThreadSnapshot | None]:
-        execute_sql = getattr(data_layer, "execute_sql", None)
-        if not callable(execute_sql):
-            return False, None
-
         try:
-            raw_rows = await execute_sql(
-                query=(
-                    'SELECT "id" AS id, "userId" AS user_id, "metadata" AS metadata '
-                    'FROM threads WHERE "id" = :thread_id LIMIT 1'
-                ),
-                parameters={"thread_id": thread_id},
-            )
+            await data_layer.update_thread(**update_kwargs)
         except Exception:
+            LOGGER.warning("Failed to update Discord thread '%s' owner metadata.", thread_id)
+            return
+
+        record = await self._read_existing_thread_record(data_layer=data_layer, thread_id=thread_id)
+        if record is None:
+            return
+        observed_owner_user_id = self._extract_thread_owner_user_id(record)
+        if observed_owner_user_id != owner_user_id:
             LOGGER.warning(
-                "Failed to read thread snapshot via execute_sql for Discord thread '%s'.",
+                "Discord thread owner mismatch after update: thread_id=%s expected_owner_user_id=%s observed_owner_user_id=%s",
                 thread_id,
-            )
-            return True, None
-
-        if not isinstance(raw_rows, list):
-            LOGGER.warning(
-                "Unexpected execute_sql result type '%s' while reading Discord thread '%s'.",
-                type(raw_rows).__name__,
-                thread_id,
-            )
-            return True, None
-
-        if not raw_rows:
-            return True, _ThreadSnapshot(
-                thread_exists=False,
-                owner_user_id=None,
-                metadata={},
-                owner_observable=True,
+                owner_user_id,
+                observed_owner_user_id,
             )
 
-        first_row = raw_rows[0]
-        if not isinstance(first_row, dict):
-            LOGGER.warning(
-                "Unexpected execute_sql row type '%s' while reading Discord thread '%s'.",
-                type(first_row).__name__,
-                thread_id,
-            )
-            return True, None
-
-        owner_observable, owner_user_id = self._extract_owner_user_id(first_row)
-        if not owner_observable:
-            LOGGER.warning(
-                "Missing owner column in execute_sql result while reading Discord thread '%s'.",
-                thread_id,
-            )
-            return True, None
-
-        return True, _ThreadSnapshot(
-            thread_exists=True,
-            owner_user_id=owner_user_id,
-            metadata=self._decode_thread_metadata(first_row.get("metadata")),
-            owner_observable=True,
-        )
-
-    async def _read_thread_snapshot_via_execute_query(
+    async def _read_existing_thread_record(
         self,
         *,
         data_layer: object,
         thread_id: str,
-    ) -> tuple[bool, _ThreadSnapshot | None]:
-        execute_query = getattr(data_layer, "execute_query", None)
-        if not callable(execute_query):
-            return False, None
-
-        try:
-            raw_rows = await execute_query(
-                query='SELECT id, "userId" AS user_id, metadata FROM "Thread" WHERE id = $1 LIMIT 1',
-                params={"thread_id": thread_id},
-            )
-        except Exception:
-            LOGGER.warning(
-                "Failed to read thread snapshot via execute_query for Discord thread '%s'.",
-                thread_id,
-            )
-            return True, None
-
-        if not isinstance(raw_rows, list):
-            LOGGER.warning(
-                "Unexpected execute_query result type '%s' while reading Discord thread '%s'.",
-                type(raw_rows).__name__,
-                thread_id,
-            )
-            return True, None
-
-        if not raw_rows:
-            return True, _ThreadSnapshot(
-                thread_exists=False,
-                owner_user_id=None,
-                metadata={},
-                owner_observable=True,
-            )
-
-        first_row = raw_rows[0]
-        if not isinstance(first_row, dict):
-            LOGGER.warning(
-                "Unexpected execute_query row type '%s' while reading Discord thread '%s'.",
-                type(first_row).__name__,
-                thread_id,
-            )
-            return True, None
-
-        owner_observable, owner_user_id = self._extract_owner_user_id(first_row)
-        if not owner_observable:
-            LOGGER.warning(
-                "Missing owner column in execute_query result while reading Discord thread '%s'.",
-                thread_id,
-            )
-            return True, None
-
-        return True, _ThreadSnapshot(
-            thread_exists=True,
-            owner_user_id=owner_user_id,
-            metadata=self._decode_thread_metadata(first_row.get("metadata")),
-            owner_observable=True,
-        )
-
-    async def _read_thread_snapshot_via_get_thread(
-        self,
-        *,
-        data_layer: object,
-        thread_id: str,
-    ) -> _ThreadSnapshot | None:
+    ) -> dict[str, object] | None:
         get_thread = getattr(data_layer, "get_thread", None)
         if not callable(get_thread):
             return None
@@ -778,50 +566,20 @@ class EasierlitDiscordBridge:
             thread = await get_thread(thread_id)
         except Exception:
             LOGGER.warning(
-                "Failed to read thread snapshot via get_thread for Discord thread '%s'.",
+                "Failed to fetch existing metadata for Discord thread '%s'.",
                 thread_id,
             )
             return None
-
-        if thread is None:
-            return _ThreadSnapshot(
-                thread_exists=False,
-                owner_user_id=None,
-                metadata={},
-                owner_observable=True,
-            )
 
         if not isinstance(thread, dict):
-            LOGGER.warning(
-                "Unexpected get_thread result type '%s' while reading Discord thread '%s'.",
-                type(thread).__name__,
-                thread_id,
-            )
             return None
+        return thread
 
-        owner_observable, owner_user_id = self._extract_owner_user_id(thread)
-        return _ThreadSnapshot(
-            thread_exists=True,
-            owner_user_id=owner_user_id if owner_observable else None,
-            metadata=self._decode_thread_metadata(thread.get("metadata")),
-            owner_observable=owner_observable,
-        )
+    def _extract_thread_metadata(self, thread_record: dict[str, object] | None) -> dict[str, object]:
+        if not isinstance(thread_record, dict):
+            return {}
 
-    def _extract_owner_user_id(self, thread_row: dict[str, object]) -> tuple[bool, str | None]:
-        for key in ("user_id", "userId", "userID", "userid"):
-            if key not in thread_row:
-                continue
-            raw_owner_user_id = thread_row.get(key)
-            if raw_owner_user_id is None:
-                return True, None
-            if isinstance(raw_owner_user_id, str):
-                owner_user_id = raw_owner_user_id.strip()
-            else:
-                owner_user_id = str(raw_owner_user_id).strip()
-            return True, owner_user_id or None
-        return False, None
-
-    def _decode_thread_metadata(self, metadata: object) -> dict[str, object]:
+        metadata = thread_record.get("metadata")
         if isinstance(metadata, dict):
             return dict(metadata)
         if isinstance(metadata, str):
@@ -833,27 +591,19 @@ class EasierlitDiscordBridge:
                 return decoded
         return {}
 
-    async def _ensure_thread_row_for_listing(
-        self,
-        *,
-        data_layer: object,
-        thread_id: str,
-        user_id: str | None,
-        thread_name: str | None,
-    ) -> None:
-        ensure_kwargs: dict[str, object] = {"thread_id": thread_id}
-        if user_id is not None:
-            ensure_kwargs["user_id"] = user_id
-        if isinstance(thread_name, str) and thread_name.strip():
-            ensure_kwargs["name"] = thread_name
+    def _extract_thread_owner_user_id(self, thread_record: dict[str, object] | None) -> str | None:
+        if not isinstance(thread_record, dict):
+            return None
 
-        try:
-            await data_layer.update_thread(**ensure_kwargs)
-        except Exception:
-            LOGGER.warning(
-                "Failed to seed Discord thread '%s' before metadata upsert.",
-                thread_id,
-            )
+        raw_owner_user_id = thread_record.get("userId")
+        if raw_owner_user_id is None:
+            raw_owner_user_id = thread_record.get("user_id")
+        if raw_owner_user_id is None:
+            return None
+        rendered_owner_user_id = str(raw_owner_user_id).strip()
+        if not rendered_owner_user_id:
+            return None
+        return rendered_owner_user_id
 
     def _resolve_discord_thread_owner_user_id(
         self,

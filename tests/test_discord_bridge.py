@@ -105,7 +105,7 @@ def test_resolve_thread_target_normalizes_dm_name_without_date_suffix():
     assert bind is True
 
 
-def test_resolve_thread_target_text_channel_creates_thread_and_uses_channel_id():
+def test_resolve_thread_target_text_channel_uses_created_thread_id():
     import easierlit.discord_bridge as bridge_module
 
     class FakeThread:
@@ -160,7 +160,7 @@ def test_resolve_thread_target_text_channel_creates_thread_and_uses_channel_id()
             bridge._resolve_thread_target(message)
         )
 
-    assert thread_id == str(uuid.uuid5(uuid.NAMESPACE_DNS, "444"))
+    assert thread_id == str(uuid.uuid5(uuid.NAMESPACE_DNS, "7777"))
     assert thread_name == "worker-thread"
     assert bind is False
     assert text_channel.created_names == ["summarize this"]
@@ -351,7 +351,7 @@ def test_owner_rebind_falls_back_to_dm_persisted_user_when_runtime_auth_missing(
     assert updated["metadata"]["easierlit_discord_owner_id"] == "321"
 
 
-def test_owner_rebind_seeds_missing_thread_before_metadata_upsert():
+def test_owner_rebind_upserts_missing_thread_with_single_update():
     class _FakeDataLayer:
         def __init__(self):
             self.updated_threads: list[dict] = []
@@ -381,7 +381,7 @@ def test_owner_rebind_seeds_missing_thread_before_metadata_upsert():
                 thread_id,
                 {"id": thread_id, "createdAt": None, "metadata": {}, "userId": None, "name": None},
             )
-            if metadata is None and thread["createdAt"] is None:
+            if thread["createdAt"] is None:
                 thread["createdAt"] = "2026-02-20T00:00:00.000Z"
             if isinstance(metadata, dict):
                 thread["metadata"].update(metadata)
@@ -417,16 +417,12 @@ def test_owner_rebind_seeds_missing_thread_before_metadata_upsert():
         )
     )
 
-    assert len(fake_data_layer.updated_threads) == 2
-    first_update = fake_data_layer.updated_threads[0]
-    second_update = fake_data_layer.updated_threads[1]
-    assert first_update["thread_id"] == "thread-1"
-    assert first_update["metadata"] is None
-    assert first_update["user_id"] == "user-admin"
-    assert first_update["name"] == "Thread Name"
-    assert second_update["thread_id"] == "thread-1"
-    assert second_update["user_id"] == "user-admin"
-    assert second_update["metadata"]["session"] == "discord"
+    assert len(fake_data_layer.updated_threads) == 1
+    updated = fake_data_layer.updated_threads[0]
+    assert updated["thread_id"] == "thread-1"
+    assert updated["user_id"] == "user-admin"
+    assert updated["name"] == "Thread Name"
+    assert updated["metadata"]["session"] == "discord"
     assert fake_data_layer.threads["thread-1"]["createdAt"] == "2026-02-20T00:00:00.000Z"
 
 
@@ -1030,7 +1026,7 @@ def test_owner_rebind_verifies_owner_after_successful_upsert():
     assert fake_data_layer.thread["metadata"]["easierlit_discord_owner_id"] == "321"
 
 
-def test_owner_rebind_retries_when_update_thread_is_noop():
+def test_owner_rebind_attempts_single_update_without_retry():
     class _FakeDataLayer:
         def __init__(self):
             self.update_calls = 0
@@ -1099,9 +1095,8 @@ def test_owner_rebind_retries_when_update_thread_is_noop():
         )
     )
 
-    assert fake_data_layer.update_calls == 3
-    assert fake_data_layer.thread["userId"] == "user-admin"
-    assert fake_data_layer.thread["metadata"]["session"] == "discord"
+    assert fake_data_layer.update_calls == 1
+    assert fake_data_layer.thread["userId"] is None
 
 
 def test_owner_rebind_uses_cached_runtime_owner_id_when_runtime_lookup_fails():
@@ -1221,6 +1216,10 @@ def test_owner_rebind_delete_and_recreate_same_thread_id_stays_listed(tmp_path):
             session_metadata={"session": "discord"},
         )
 
+        persisted_user = await data_layer.get_user("admin")
+        assert persisted_user is not None
+        assert await data_layer.get_thread_author("thread-1") == persisted_user.identifier
+
         await data_layer.delete_thread("thread-1")
 
         await bridge._rebind_discord_thread_owner_to_runtime_auth(
@@ -1229,9 +1228,6 @@ def test_owner_rebind_delete_and_recreate_same_thread_id_stays_listed(tmp_path):
             thread_name="Thread One Recreated",
             session_metadata={"session": "discord"},
         )
-
-        persisted_user = await data_layer.get_user("admin")
-        assert persisted_user is not None
 
         threads_page = await data_layer.list_threads(
             Pagination(first=20, cursor=None),
@@ -1242,6 +1238,7 @@ def test_owner_rebind_delete_and_recreate_same_thread_id_stays_listed(tmp_path):
         recreated_thread = await data_layer.get_thread("thread-1")
         assert recreated_thread is not None
         assert recreated_thread.get("userId") == persisted_user.id
+        assert await data_layer.get_thread_author("thread-1") == persisted_user.identifier
 
     asyncio.run(_scenario())
 
