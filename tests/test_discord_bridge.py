@@ -4,10 +4,13 @@ from contextlib import ExitStack, contextmanager
 from types import SimpleNamespace
 
 import pytest
+from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
+from chainlit.types import Pagination, ThreadFilter
 
 from easierlit import EasierlitApp, EasierlitAuthConfig, EasierlitClient
 from easierlit.discord_bridge import EasierlitDiscordBridge
 from easierlit.runtime import RuntimeRegistry
+from easierlit.sqlite_bootstrap import ensure_sqlite_schema
 from chainlit.user import PersistedUser
 
 
@@ -947,6 +950,300 @@ def test_process_discord_message_upserts_owner_even_when_handler_raises():
     assert second_updated["user_id"] == "user-admin"
     assert second_updated["metadata"]["easierlit_discord_owner_id"] == "321"
     assert events[0] == "upsert"
+
+
+def test_owner_rebind_verifies_owner_after_successful_upsert():
+    class _FakeDataLayer:
+        def __init__(self):
+            self.updated_threads: list[dict[str, object]] = []
+            self.thread = {
+                "id": "thread-1",
+                "userId": "legacy-owner",
+                "metadata": {"existing": "keep"},
+            }
+
+        async def get_user(self, identifier: str):
+            if identifier == "admin":
+                return SimpleNamespace(id="user-admin")
+            return None
+
+        async def create_user(self, _user):
+            raise AssertionError("create_user should not be called")
+
+        async def execute_sql(self, *, query: str, parameters: dict):
+            assert parameters == {"thread_id": "thread-1"}
+            assert 'FROM threads WHERE "id" = :thread_id' in query
+            return [
+                {
+                    "id": self.thread["id"],
+                    "user_id": self.thread["userId"],
+                    "metadata": self.thread["metadata"],
+                }
+            ]
+
+        async def update_thread(self, thread_id: str, user_id=None, metadata=None, name=None, **_kwargs):
+            self.updated_threads.append(
+                {
+                    "thread_id": thread_id,
+                    "user_id": user_id,
+                    "metadata": metadata,
+                    "name": name,
+                }
+            )
+            if user_id is not None:
+                self.thread["userId"] = user_id
+            if isinstance(metadata, dict):
+                self.thread["metadata"] = dict(metadata)
+            if name is not None:
+                self.thread["name"] = name
+
+    fake_data_layer = _FakeDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake_data_layer)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake_data_layer)
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
+    runtime.bind(
+        client=client,
+        app=app,
+        auth=EasierlitAuthConfig(username="admin", password="admin", identifier="admin"),
+    )
+
+    bridge = EasierlitDiscordBridge(
+        runtime=runtime,
+        bot_token="token",
+        data_layer_getter=lambda: fake_data_layer,
+        client=_FakeDiscordClient(),
+    )
+
+    message = SimpleNamespace(author=SimpleNamespace(id=321, name="discord-user"))
+    asyncio.run(
+        bridge._rebind_discord_thread_owner_to_runtime_auth(
+            thread_id="thread-1",
+            message=message,
+            thread_name="Thread Name",
+            session_metadata={"session": "discord"},
+        )
+    )
+
+    assert len(fake_data_layer.updated_threads) == 1
+    assert fake_data_layer.thread["userId"] == "user-admin"
+    assert fake_data_layer.thread["metadata"]["session"] == "discord"
+    assert fake_data_layer.thread["metadata"]["easierlit_discord_owner_id"] == "321"
+
+
+def test_owner_rebind_retries_when_update_thread_is_noop():
+    class _FakeDataLayer:
+        def __init__(self):
+            self.update_calls = 0
+            self.noop_updates_remaining = 2
+            self.thread = {
+                "id": "thread-1",
+                "userId": None,
+                "metadata": {"existing": "keep"},
+            }
+
+        async def get_user(self, identifier: str):
+            if identifier == "admin":
+                return SimpleNamespace(id="user-admin")
+            return None
+
+        async def create_user(self, _user):
+            raise AssertionError("create_user should not be called")
+
+        async def execute_sql(self, *, query: str, parameters: dict):
+            assert parameters == {"thread_id": "thread-1"}
+            assert 'FROM threads WHERE "id" = :thread_id' in query
+            return [
+                {
+                    "id": self.thread["id"],
+                    "user_id": self.thread["userId"],
+                    "metadata": self.thread["metadata"],
+                }
+            ]
+
+        async def update_thread(self, thread_id: str, user_id=None, metadata=None, name=None, **_kwargs):
+            self.update_calls += 1
+            if self.noop_updates_remaining > 0:
+                self.noop_updates_remaining -= 1
+                return
+            if user_id is not None:
+                self.thread["userId"] = user_id
+            if isinstance(metadata, dict):
+                self.thread["metadata"] = dict(metadata)
+            if name is not None:
+                self.thread["name"] = name
+
+    fake_data_layer = _FakeDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake_data_layer)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake_data_layer)
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
+    runtime.bind(
+        client=client,
+        app=app,
+        auth=EasierlitAuthConfig(username="admin", password="admin", identifier="admin"),
+    )
+
+    bridge = EasierlitDiscordBridge(
+        runtime=runtime,
+        bot_token="token",
+        data_layer_getter=lambda: fake_data_layer,
+        client=_FakeDiscordClient(),
+    )
+
+    message = SimpleNamespace(author=SimpleNamespace(id=321, name="discord-user"))
+    asyncio.run(
+        bridge._rebind_discord_thread_owner_to_runtime_auth(
+            thread_id="thread-1",
+            message=message,
+            thread_name="Thread Name",
+            session_metadata={"session": "discord"},
+        )
+    )
+
+    assert fake_data_layer.update_calls == 3
+    assert fake_data_layer.thread["userId"] == "user-admin"
+    assert fake_data_layer.thread["metadata"]["session"] == "discord"
+
+
+def test_owner_rebind_uses_cached_runtime_owner_id_when_runtime_lookup_fails():
+    class _FakeDataLayer:
+        def __init__(self):
+            self.fail_owner_lookup = False
+            self.updated_threads: list[dict[str, object]] = []
+            self.thread = {"id": "thread-1", "userId": None, "metadata": {}}
+
+        async def get_user(self, identifier: str):
+            if self.fail_owner_lookup:
+                raise RuntimeError("owner lookup failed")
+            if identifier == "admin":
+                return PersistedUser(
+                    id="user-admin",
+                    createdAt="2026-02-20T00:00:00.000Z",
+                    identifier="admin",
+                    metadata={"name": "admin"},
+                )
+            return None
+
+        async def create_user(self, _user):
+            raise AssertionError("create_user should not be called")
+
+        async def execute_sql(self, *, query: str, parameters: dict):
+            if 'SELECT "id" AS id FROM threads' in query:
+                assert parameters == {}
+                return []
+            if 'FROM threads WHERE "id" = :thread_id' in query:
+                assert parameters == {"thread_id": "thread-1"}
+                return [
+                    {
+                        "id": self.thread["id"],
+                        "user_id": self.thread["userId"],
+                        "metadata": self.thread["metadata"],
+                    }
+                ]
+            raise AssertionError(f"Unexpected query: {query}")
+
+        async def update_thread(self, thread_id: str, user_id=None, metadata=None, name=None, **_kwargs):
+            self.updated_threads.append(
+                {
+                    "thread_id": thread_id,
+                    "user_id": user_id,
+                    "metadata": metadata,
+                    "name": name,
+                }
+            )
+            if user_id is not None:
+                self.thread["userId"] = user_id
+            if isinstance(metadata, dict):
+                self.thread["metadata"] = dict(metadata)
+            if name is not None:
+                self.thread["name"] = name
+
+    fake_data_layer = _FakeDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake_data_layer)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake_data_layer)
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
+    runtime.bind(
+        client=client,
+        app=app,
+        auth=EasierlitAuthConfig(username="admin", password="admin", identifier="admin"),
+    )
+
+    bridge = EasierlitDiscordBridge(
+        runtime=runtime,
+        bot_token="token",
+        data_layer_getter=lambda: fake_data_layer,
+        client=_FakeDiscordClient(),
+    )
+
+    async def _scenario() -> None:
+        await bridge.start()
+        fake_data_layer.fail_owner_lookup = True
+        await bridge._rebind_discord_thread_owner_to_runtime_auth(
+            thread_id="thread-1",
+            message=SimpleNamespace(author=SimpleNamespace(id=321, name="discord-user")),
+            thread_name="Thread Name",
+            session_metadata={"session": "discord"},
+        )
+        await bridge.stop()
+
+    asyncio.run(_scenario())
+
+    assert bridge._cached_runtime_auth_owner_user_id == "user-admin"
+    assert fake_data_layer.thread["userId"] == "user-admin"
+    assert len(fake_data_layer.updated_threads) == 1
+
+
+def test_owner_rebind_delete_and_recreate_same_thread_id_stays_listed(tmp_path):
+    db_path = ensure_sqlite_schema(tmp_path / "discord-recreate.db")
+    data_layer = SQLAlchemyDataLayer(conninfo=f"sqlite+aiosqlite:///{db_path}")
+
+    runtime = RuntimeRegistry(data_layer_getter=lambda: data_layer)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: data_layer)
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
+    runtime.bind(
+        client=client,
+        app=app,
+        auth=EasierlitAuthConfig(username="admin", password="admin", identifier="admin"),
+    )
+
+    bridge = EasierlitDiscordBridge(
+        runtime=runtime,
+        bot_token="token",
+        data_layer_getter=lambda: data_layer,
+        client=_FakeDiscordClient(),
+    )
+
+    async def _scenario() -> None:
+        message = SimpleNamespace(author=SimpleNamespace(id=321, name="discord-user"))
+        await bridge._rebind_discord_thread_owner_to_runtime_auth(
+            thread_id="thread-1",
+            message=message,
+            thread_name="Thread One",
+            session_metadata={"session": "discord"},
+        )
+
+        await data_layer.delete_thread("thread-1")
+
+        await bridge._rebind_discord_thread_owner_to_runtime_auth(
+            thread_id="thread-1",
+            message=message,
+            thread_name="Thread One Recreated",
+            session_metadata={"session": "discord"},
+        )
+
+        persisted_user = await data_layer.get_user("admin")
+        assert persisted_user is not None
+
+        threads_page = await data_layer.list_threads(
+            Pagination(first=20, cursor=None),
+            ThreadFilter(search=None, userId=persisted_user.id),
+        )
+        assert [thread.get("id") for thread in threads_page.data] == ["thread-1"]
+
+        recreated_thread = await data_layer.get_thread("thread-1")
+        assert recreated_thread is not None
+        assert recreated_thread.get("userId") == persisted_user.id
+
+    asyncio.run(_scenario())
 
 
 def test_send_outgoing_command_sends_message_and_tool_prefix():
