@@ -212,7 +212,21 @@ class RuntimeRegistry:
         with self._lock:
             return self._thread_to_discord_channel.get(thread_id)
 
-    async def send_to_discord(self, *, thread_id: str, content: str) -> bool:
+    def is_discord_thread(self, thread_id: str) -> bool:
+        if not isinstance(thread_id, str):
+            return False
+        normalized_thread_id = thread_id.strip()
+        if not normalized_thread_id:
+            return False
+        return self.get_discord_channel_for_thread(normalized_thread_id) is not None
+
+    async def send_to_discord(
+        self,
+        *,
+        thread_id: str,
+        content: str,
+        elements: list[Any] | None = None,
+    ) -> bool:
         if not isinstance(thread_id, str):
             return False
         normalized_thread_id = thread_id.strip()
@@ -220,7 +234,8 @@ class RuntimeRegistry:
             return False
         if not isinstance(content, str):
             return False
-        if not content.strip():
+        resolved_elements = elements or []
+        if not content.strip() and not resolved_elements:
             return False
 
         discord_channel_id = self.get_discord_channel_for_thread(normalized_thread_id)
@@ -231,6 +246,7 @@ class RuntimeRegistry:
             command="add_message",
             thread_id=normalized_thread_id,
             content=content,
+            elements=resolved_elements,
             author="Assistant",
         )
         return await self._apply_discord_command(discord_channel_id, command)

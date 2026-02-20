@@ -86,7 +86,8 @@ EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", m
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name is fixed to "Reasoning"
-EasierlitApp.send_to_discord(thread_id, content) -> bool
+EasierlitApp.send_to_discord(thread_id, content, elements=None) -> bool
+EasierlitApp.is_discord_thread(thread_id) -> bool
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None)
 EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # tool_name is fixed to "Reasoning"
@@ -274,7 +275,7 @@ Message methods:
 
 - `app.add_message(...)`, `app.update_message(...)`, `app.delete_message(...)`
 - `app.add_tool(...)`, `app.add_thought(...)`, `app.update_tool(...)`, `app.update_thought(...)`
-- `app.send_to_discord(...)` for explicit Discord-only replies
+- `app.send_to_discord(...)` for explicit Discord-only replies (supports optional `elements`)
 
 Execution model:
 

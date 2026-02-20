@@ -207,6 +207,65 @@ def test_thread_crud_with_data_layer():
     assert fake.deleted_threads == ["thread-1"]
 
 
+def test_is_discord_thread_returns_true_for_runtime_mapped_thread():
+    runtime = RuntimeRegistry()
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: None)
+
+    assert app.is_discord_thread("thread-1") is False
+    runtime.register_discord_channel(thread_id="thread-1", channel_id=123)
+    assert app.is_discord_thread("thread-1") is True
+
+
+def test_is_discord_thread_uses_data_layer_metadata_markers():
+    class _FakeDiscordMetadataDataLayer(FakeDataLayer):
+        async def get_thread(self, thread_id: str):
+            self.requested_threads.append(thread_id)
+            return {
+                "id": thread_id,
+                "metadata": {
+                    "easierlit_discord_owner_id": "321",
+                },
+            }
+
+    fake = _FakeDiscordMetadataDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake)
+
+    assert app.is_discord_thread("thread-1") is True
+
+
+def test_is_discord_thread_handles_json_metadata_marker():
+    class _FakeDiscordJsonMetadataDataLayer(FakeDataLayer):
+        async def get_thread(self, thread_id: str):
+            self.requested_threads.append(thread_id)
+            return {
+                "id": thread_id,
+                "metadata": '{"client_type":"discord"}',
+            }
+
+    fake = _FakeDiscordJsonMetadataDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake)
+
+    assert app.is_discord_thread("thread-1") is True
+
+
+def test_is_discord_thread_returns_false_without_discord_markers():
+    class _FakeNonDiscordMetadataDataLayer(FakeDataLayer):
+        async def get_thread(self, thread_id: str):
+            self.requested_threads.append(thread_id)
+            return {
+                "id": thread_id,
+                "metadata": {"client_type": "webapp"},
+            }
+
+    fake = _FakeNonDiscordMetadataDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake)
+
+    assert app.is_discord_thread("thread-1") is False
+
+
 def test_reset_thread_recreates_same_thread_id_and_only_restores_name():
     class _FakeDataLayerForReset(FakeDataLayer):
         async def get_thread(self, thread_id: str):

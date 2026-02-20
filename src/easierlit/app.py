@@ -155,18 +155,49 @@ class EasierlitApp:
             elements=elements,
         )
 
-    def send_to_discord(self, thread_id: str, content: str) -> bool:
+    def send_to_discord(
+        self,
+        thread_id: str,
+        content: str,
+        elements: list[Any] | None = None,
+    ) -> bool:
         resolved_thread_id = self._require_non_empty_thread_id(thread_id)
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("content must be a non-empty string.")
+        if not isinstance(content, str):
+            raise ValueError("content must be a string.")
+        resolved_elements = elements or []
+        if not content.strip() and not resolved_elements:
+            raise ValueError("content or elements must be provided.")
         return bool(
             self._runtime.run_coroutine_sync(
                 self._runtime.send_to_discord(
                     thread_id=resolved_thread_id,
                     content=content,
+                    elements=resolved_elements,
                 )
             )
         )
+
+    def is_discord_thread(self, thread_id: str) -> bool:
+        resolved_thread_id = self._require_non_empty_thread_id(thread_id)
+        if self._runtime.is_discord_thread(resolved_thread_id):
+            return True
+
+        data_layer = self._data_layer_getter()
+        if data_layer is None:
+            return False
+
+        async def _is_discord_thread_from_data_layer() -> bool:
+            try:
+                thread = await data_layer.get_thread(resolved_thread_id)
+            except Exception:
+                return False
+            if not isinstance(thread, dict):
+                return False
+
+            metadata = self._decode_thread_metadata(thread.get("metadata"))
+            return self._has_discord_thread_markers(metadata)
+
+        return bool(self._runtime.run_coroutine_sync(_is_discord_thread_from_data_layer()))
 
     def add_tool(
         self,
@@ -892,3 +923,31 @@ class EasierlitApp:
         if not rendered:
             return None
         return rendered
+
+    def _decode_thread_metadata(self, value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return dict(value)
+        if not isinstance(value, str):
+            return {}
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(decoded, dict):
+            return decoded
+        return {}
+
+    def _has_discord_thread_markers(self, metadata: dict[str, Any]) -> bool:
+        if not isinstance(metadata, dict):
+            return False
+
+        owner_id = metadata.get("easierlit_discord_owner_id")
+        if isinstance(owner_id, str) and owner_id.strip():
+            return True
+
+        for key in ("client_type", "clientType"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip().lower() == "discord":
+                return True
+
+        return False

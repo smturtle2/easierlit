@@ -158,7 +158,8 @@ EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", m
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None, elements=None) -> str  # tool_name은 "Reasoning" 고정
-EasierlitApp.send_to_discord(thread_id, content) -> bool
+EasierlitApp.send_to_discord(thread_id, content, elements=None) -> bool
+EasierlitApp.is_discord_thread(thread_id) -> bool
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None, elements=None)
 EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None, elements=None)
 EasierlitApp.update_thought(thread_id, message_id, content, metadata=None, elements=None)  # tool_name은 "Reasoning" 고정
@@ -240,6 +241,7 @@ Message API:
 - `app.add_tool(...)`
 - `app.add_thought(...)`
 - `app.send_to_discord(...)`
+- `app.is_discord_thread(...)`
 - `app.update_message(...)`
 - `app.update_tool(...)`
 - `app.update_thought(...)`
@@ -269,6 +271,8 @@ Thread 작업 상태 API:
 - `app.add_thought(...)`는 동일한 도구 호출 경로를 사용하고 도구명은 `Reasoning`으로 고정됩니다.
 - `app.add_message(...)`/`app.add_tool(...)`/`app.add_thought(...)`는 Discord로 자동 전송되지 않습니다.
 - `app.send_to_discord(...)`는 Discord에만 전송하고 `True/False`를 반환합니다.
+- `app.send_to_discord(..., elements=[...])`로 Discord 파일/이미지 첨부 전송이 가능합니다.
+- `app.is_discord_thread(...)`는 해당 thread가 Discord 유입인지 판별합니다.
 - `app.start_thread_task(...)`는 특정 thread를 작업 중(UI indicator) 상태로 표시합니다.
 - `app.end_thread_task(...)`는 해당 thread의 작업 중(UI indicator) 상태를 해제합니다.
 - `app.is_thread_task_running(...)`는 thread 작업 중 상태를 반환합니다.

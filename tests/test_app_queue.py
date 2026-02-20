@@ -15,11 +15,17 @@ class _CapturingRuntime:
 
 class _DiscordRuntime:
     def __init__(self, *, result: bool):
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, list[object]]] = []
         self.result = result
 
-    async def send_to_discord(self, *, thread_id: str, content: str) -> bool:
-        self.calls.append((thread_id, content))
+    async def send_to_discord(
+        self,
+        *,
+        thread_id: str,
+        content: str,
+        elements: list[object] | None = None,
+    ) -> bool:
+        self.calls.append((thread_id, content, elements or []))
         return self.result
 
     def run_coroutine_sync(self, coro):
@@ -231,7 +237,7 @@ def test_send_to_discord_returns_runtime_result():
     sent = app.send_to_discord("thread-1", "hello")
 
     assert sent is True
-    assert runtime.calls == [("thread-1", "hello")]
+    assert runtime.calls == [("thread-1", "hello", [])]
 
 
 def test_send_to_discord_returns_false_when_runtime_send_fails():
@@ -241,7 +247,17 @@ def test_send_to_discord_returns_false_when_runtime_send_fails():
     sent = app.send_to_discord("thread-1", "hello")
 
     assert sent is False
-    assert runtime.calls == [("thread-1", "hello")]
+    assert runtime.calls == [("thread-1", "hello", [])]
+
+
+def test_send_to_discord_passes_elements():
+    runtime = _DiscordRuntime(result=True)
+    app = EasierlitApp(runtime=runtime)
+
+    sent = app.send_to_discord("thread-1", "hello", elements=[{"path": "a.png"}])
+
+    assert sent is True
+    assert runtime.calls == [("thread-1", "hello", [{"path": "a.png"}])]
 
 
 def test_send_to_discord_rejects_blank_fields():
@@ -250,8 +266,18 @@ def test_send_to_discord_rejects_blank_fields():
 
     with pytest.raises(ValueError, match="thread_id"):
         app.send_to_discord(" ", "hello")
-    with pytest.raises(ValueError, match="content"):
+    with pytest.raises(ValueError, match="content or elements"):
         app.send_to_discord("thread-1", " ")
+
+
+def test_send_to_discord_allows_blank_content_when_elements_exist():
+    runtime = _DiscordRuntime(result=True)
+    app = EasierlitApp(runtime=runtime)
+
+    sent = app.send_to_discord("thread-1", " ", elements=[{"path": "a.png"}])
+
+    assert sent is True
+    assert runtime.calls == [("thread-1", " ", [{"path": "a.png"}])]
 
 
 

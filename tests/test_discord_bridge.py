@@ -46,9 +46,12 @@ class _FakeDiscordClient:
 class _FakeSendChannel:
     def __init__(self):
         self.messages: list[str] = []
+        self.file_names: list[list[str]] = []
 
-    async def send(self, content: str):
+    async def send(self, content: str, **kwargs):
         self.messages.append(content)
+        files = kwargs.get("files") or []
+        self.file_names.append([getattr(file, "filename", "") for file in files])
 
 
 def test_resolve_thread_target_normalizes_dm_name_without_date_suffix():
@@ -703,3 +706,31 @@ def test_send_outgoing_command_fetches_channel_when_cache_misses():
     assert result is True
     assert fake_client.fetch_calls == 1
     assert channel.messages == ["hello"]
+
+
+def test_send_outgoing_command_sends_element_file_attachment(tmp_path):
+    fake_client = _FakeDiscordClient()
+    channel = _FakeSendChannel()
+    fake_client._channels[789] = channel
+
+    bridge = EasierlitDiscordBridge(
+        runtime=RuntimeRegistry(),
+        bot_token="token",
+        client=fake_client,
+    )
+
+    image_path = tmp_path / "sample.png"
+    image_path.write_bytes(b"fake-image-bytes")
+
+    add_message = SimpleNamespace(
+        command="add_message",
+        thread_id="thread-1",
+        content="with image",
+        author="Assistant",
+        elements=[{"path": str(image_path), "name": "sample.png"}],
+    )
+    result = asyncio.run(bridge.send_outgoing_command(789, add_message))
+
+    assert result is True
+    assert channel.messages == ["with image"]
+    assert channel.file_names == [["sample.png"]]

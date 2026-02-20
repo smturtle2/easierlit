@@ -238,13 +238,28 @@ add_thought(
 send_to_discord(
     thread_id: str,
     content: str,
+    elements: list[Any] | None = None,
 ) -> bool
 ```
 
 - Sends content to Discord only for the currently mapped Discord channel of `thread_id`.
+- Optional `elements` are sent as Discord file attachments when resolvable.
 - Returns `True` when sent, `False` when channel is not registered or send fails.
-- Raises `ValueError` when `thread_id` or `content` is blank.
+- Raises `ValueError` when `thread_id` is blank, or when both `content` and `elements` are empty.
 - Does not create/update Chainlit steps or data-layer records.
+
+### 4.6.2 `EasierlitApp.is_discord_thread`
+
+```python
+is_discord_thread(thread_id: str) -> bool
+```
+
+- Returns `True` when the thread is recognized as Discord-origin.
+- Detection order:
+- runtime Discord channel mapping for active sessions
+- persisted thread metadata markers (`easierlit_discord_owner_id`, `client_type="discord"`, `clientType="discord"`)
+- Returns `False` when no marker is found or data layer is unavailable.
+- Raises `ValueError` when `thread_id` is blank.
 
 ### 4.7 `EasierlitApp.update_message`
 
@@ -577,6 +592,7 @@ OutgoingCommand(
 - Outgoing `app.add_tool/update_tool` maps to tool-call flow with step name set from `tool_name`.
 - Outgoing `app.add_thought/update_thought` maps to tool-call flow with fixed step name `Reasoning`.
 - `app.send_to_discord` maps to explicit Discord-only output (no step persistence).
+- `app.is_discord_thread` checks Discord-origin markers.
 
 ## 8. Method-to-Example Index
 
@@ -589,5 +605,6 @@ OutgoingCommand(
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
 | `EasierlitApp.send_to_discord` | `examples/discord_bot.py` |
+| `EasierlitApp.is_discord_thread` | No dedicated example yet (runtime/data-layer marker check) |
 | Auth + persistence configs | `examples/custom_auth.py` |
 | Discord config | `examples/discord_bot.py` |

@@ -30,6 +30,16 @@ def test_register_and_unregister_session_mapping():
     assert runtime.get_session_id_for_thread("thread-1") is None
 
 
+def test_is_discord_thread_checks_registered_mapping():
+    runtime = RuntimeRegistry()
+
+    assert runtime.is_discord_thread("thread-1") is False
+    runtime.register_discord_channel(thread_id="thread-1", channel_id=123)
+    assert runtime.is_discord_thread("thread-1") is True
+    assert runtime.is_discord_thread(" ") is False
+    assert runtime.is_discord_thread(None) is False
+
+
 def test_dispatch_incoming_delegates_to_client():
     runtime = RuntimeRegistry()
     app = EasierlitApp(runtime=runtime)
@@ -264,17 +274,26 @@ def test_send_to_discord_sends_when_channel_is_registered():
     runtime.register_discord_channel(thread_id="thread-1", channel_id=123)
 
     sent_messages: list[str] = []
+    sent_elements: list[list[dict]] = []
 
     async def fake_sender(channel_id: int, command: OutgoingCommand) -> bool:
         assert channel_id == 123
         sent_messages.append(command.content or "")
+        sent_elements.append(command.elements)
         return True
 
     runtime.set_discord_sender(fake_sender)
-    result = asyncio.run(runtime.send_to_discord(thread_id="thread-1", content="hello discord"))
+    result = asyncio.run(
+        runtime.send_to_discord(
+            thread_id="thread-1",
+            content="hello discord",
+            elements=[{"name": "image.png"}],
+        )
+    )
 
     assert result is True
     assert sent_messages == ["hello discord"]
+    assert sent_elements == [[{"name": "image.png"}]]
 
 
 def test_send_to_discord_returns_false_when_channel_missing():
@@ -291,6 +310,33 @@ def test_send_to_discord_returns_false_when_channel_missing():
 
     assert result is False
     assert sent_messages == []
+
+
+def test_send_to_discord_allows_blank_content_with_elements():
+    runtime = RuntimeRegistry()
+    runtime.register_discord_channel(thread_id="thread-1", channel_id=123)
+
+    sent_messages: list[str] = []
+    sent_elements: list[list[dict]] = []
+
+    async def fake_sender(channel_id: int, command: OutgoingCommand) -> bool:
+        assert channel_id == 123
+        sent_messages.append(command.content or "")
+        sent_elements.append(command.elements)
+        return True
+
+    runtime.set_discord_sender(fake_sender)
+    result = asyncio.run(
+        runtime.send_to_discord(
+            thread_id="thread-1",
+            content=" ",
+            elements=[{"name": "image.png"}],
+        )
+    )
+
+    assert result is True
+    assert sent_messages == [" "]
+    assert sent_elements == [[{"name": "image.png"}]]
 
 
 def test_apply_outgoing_command_respects_explicit_step_type():

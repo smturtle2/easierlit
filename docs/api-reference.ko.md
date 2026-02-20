@@ -238,13 +238,28 @@ add_thought(
 send_to_discord(
     thread_id: str,
     content: str,
+    elements: list[Any] | None = None,
 ) -> bool
 ```
 
 - `thread_id`에 매핑된 Discord channel로만 내용을 전송
+- `elements`를 전달하면 해석 가능한 항목을 Discord 첨부파일로 전송
 - 전송 성공 시 `True`, channel 미등록/전송 실패 시 `False` 반환
-- `thread_id` 또는 `content`가 공백이면 `ValueError`
+- `thread_id`가 공백이거나, `content`/`elements`가 모두 비어 있으면 `ValueError`
 - Chainlit step/data-layer 레코드는 생성/수정하지 않음
+
+### 4.6.2 `EasierlitApp.is_discord_thread`
+
+```python
+is_discord_thread(thread_id: str) -> bool
+```
+
+- thread가 Discord 유입으로 판별되면 `True` 반환
+- 판별 순서:
+- 활성 세션의 runtime Discord channel 매핑
+- 저장된 thread metadata marker (`easierlit_discord_owner_id`, `client_type="discord"`, `clientType="discord"`)
+- marker가 없거나 data layer를 사용할 수 없으면 `False` 반환
+- `thread_id`가 공백이면 `ValueError`
 
 ### 4.7 `EasierlitApp.update_message`
 
@@ -577,6 +592,7 @@ OutgoingCommand(
 - `app.add_tool/update_tool` 출력은 tool-call 흐름이며 step name은 `tool_name` 사용
 - `app.add_thought/update_thought` 출력은 tool-call 흐름이며 step name은 `Reasoning` 고정
 - `app.send_to_discord`는 Discord 전용 출력 경로이며 step 저장이 없음
+- `app.is_discord_thread`는 Discord 유입 marker를 점검
 
 ## 8. Method-to-Example 인덱스
 
@@ -589,5 +605,6 @@ OutgoingCommand(
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
 | `EasierlitApp.send_to_discord` | `examples/discord_bot.py` |
+| `EasierlitApp.is_discord_thread` | 전용 예제 없음 (runtime/data-layer marker 점검 API) |
 | 인증/영속성 설정 | `examples/custom_auth.py` |
 | Discord 설정 | `examples/discord_bot.py` |

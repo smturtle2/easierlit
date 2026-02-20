@@ -158,7 +158,8 @@ EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", m
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None, elements=None) -> str  # tool_name is fixed to "Reasoning"
-EasierlitApp.send_to_discord(thread_id, content) -> bool
+EasierlitApp.send_to_discord(thread_id, content, elements=None) -> bool
+EasierlitApp.is_discord_thread(thread_id) -> bool
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None, elements=None)
 EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None, elements=None)
 EasierlitApp.update_thought(thread_id, message_id, content, metadata=None, elements=None)  # tool_name is fixed to "Reasoning"
@@ -240,6 +241,7 @@ Message APIs:
 - `app.add_tool(...)`
 - `app.add_thought(...)`
 - `app.send_to_discord(...)`
+- `app.is_discord_thread(...)`
 - `app.update_message(...)`
 - `app.update_tool(...)`
 - `app.update_thought(...)`
@@ -269,6 +271,8 @@ Behavior highlights:
 - `app.add_thought(...)` is the same tool-call path with fixed tool name `Reasoning`.
 - `app.add_message(...)`/`app.add_tool(...)`/`app.add_thought(...)` no longer auto-send to Discord.
 - `app.send_to_discord(...)` sends only to Discord and returns `True/False`.
+- `app.send_to_discord(..., elements=[...])` can attach files/images to Discord.
+- `app.is_discord_thread(...)` checks whether a thread is Discord-origin.
 - `app.start_thread_task(...)` marks one thread as working (UI task indicator).
 - `app.end_thread_task(...)` clears working state (UI task indicator).
 - `app.is_thread_task_running(...)` returns current thread working state.
