@@ -138,14 +138,45 @@ class _FakeDiscordClient:
         return self.channels.get(channel_id)
 
 
+class _FakeDiscordClientNoAddListener:
+    def __init__(self) -> None:
+        self.started_tokens: list[str] = []
+        self.closed = False
+        self._close_event = asyncio.Event()
+        self.channels: dict[int, object] = {}
+        self.user = SimpleNamespace(id=1000, name="bridge-bot-no-add-listener")
+        self.on_ready = None
+        self.on_message = None
+
+    def event(self, coro):
+        setattr(self, coro.__name__, coro)
+        return coro
+
+    async def start(self, token: str) -> None:
+        self.started_tokens.append(token)
+        await self._close_event.wait()
+
+    async def close(self) -> None:
+        self.closed = True
+        self._close_event.set()
+
+    def is_closed(self) -> bool:
+        return self.closed
+
+    def get_channel(self, channel_id: int):
+        return self.channels.get(channel_id)
+
+    async def fetch_channel(self, channel_id: int):
+        return self.channels.get(channel_id)
+
+
 class _TestableBridge(EasierlitDiscordBridge):
     def __init__(self, *, runtime, bot_token: str, fake_client: _FakeDiscordClient) -> None:
         super().__init__(runtime=runtime, bot_token=bot_token)
         self._fake_client = fake_client
 
     def _create_discord_client(self):
-        self._fake_client.add_listener(self._on_discord_ready, "on_ready")
-        self._fake_client.add_listener(self._on_discord_message, "on_message")
+        self._register_discord_event_handlers(self._fake_client)
         return self._fake_client
 
 
@@ -230,6 +261,30 @@ def test_start_stop_registers_callbacks_and_client_lifecycle(monkeypatch):
         assert fake_client.closed is True
         assert runtime.discord_sender is None
         assert runtime.discord_typing_sender is None
+
+    asyncio.run(_scenario())
+
+
+def test_start_works_when_client_has_no_add_listener(monkeypatch):
+    async def _scenario():
+        from easierlit import discord_bridge as module
+
+        bridge, runtime, _, data_layer, _ = _build_bridge()
+        no_add_listener_client = _FakeDiscordClientNoAddListener()
+        bridge._fake_client = no_add_listener_client
+        monkeypatch.setattr(module, "get_data_layer", lambda: data_layer)
+
+        await bridge.start()
+        assert runtime.discord_sender is not None
+        assert runtime.discord_typing_sender is not None
+        assert callable(no_add_listener_client.on_ready)
+        assert callable(no_add_listener_client.on_message)
+
+        await asyncio.sleep(0)
+        assert no_add_listener_client.started_tokens == ["discord-token"]
+
+        await bridge.stop()
+        assert no_add_listener_client.closed is True
 
     asyncio.run(_scenario())
 

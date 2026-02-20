@@ -73,9 +73,38 @@ class EasierlitDiscordBridge:
         intents = discord.Intents.default()
         intents.message_content = True
         client = discord.Client(intents=intents)
-        client.add_listener(self._on_discord_ready, "on_ready")
-        client.add_listener(self._on_discord_message, "on_message")
+        self._register_discord_event_handlers(client)
         return client
+
+    def _register_discord_event_handlers(self, client: discord.Client) -> None:
+        add_listener = getattr(client, "add_listener", None)
+        if callable(add_listener):
+            add_listener(self._on_discord_ready, "on_ready")
+            add_listener(self._on_discord_message, "on_message")
+            return
+
+        event_decorator = getattr(client, "event", None)
+        if callable(event_decorator):
+
+            @event_decorator
+            async def on_ready():
+                await self._on_discord_ready()
+
+            @event_decorator
+            async def on_message(message: discord.Message):
+                await self._on_discord_message(message)
+
+            return
+
+        # Last-resort fallback for discord client variants without decorators.
+        async def on_ready():
+            await self._on_discord_ready()
+
+        async def on_message(message: discord.Message):
+            await self._on_discord_message(message)
+
+        setattr(client, "on_ready", on_ready)
+        setattr(client, "on_message", on_message)
 
     async def _run_client_forever(self) -> None:
         client = self._client
