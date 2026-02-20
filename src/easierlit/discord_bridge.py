@@ -60,6 +60,7 @@ class EasierlitDiscordBridge:
             return
 
         self._runtime.set_discord_sender(self.send_outgoing_command)
+        await self._backfill_all_thread_owners_to_runtime_auth()
         self._started = True
         self._client_task = asyncio.create_task(self._client.start(self._bot_token))
         self._client_task.add_done_callback(self._on_client_task_done)
@@ -205,7 +206,16 @@ class EasierlitDiscordBridge:
         channel: MessageableChannel,
         bind_thread_to_user: bool,
     ) -> None:
-        user = await self._get_or_create_user(message.author)
+        discord_user = await self._get_or_create_user(message.author)
+        runtime_owner_user = await self._resolve_runtime_auth_owner_user(self._data_layer_getter())
+        runtime_owner_user_id = self._coerce_user_id(runtime_owner_user)
+        resolved_owner_user_id = self._resolve_discord_thread_owner_user_id(
+            runtime_owner_user_id=runtime_owner_user_id,
+            bind_thread_to_user=bind_thread_to_user,
+            discord_user=discord_user,
+        )
+        session_user = runtime_owner_user if runtime_owner_user is not None else discord_user
+        discord_author_name = self._resolve_discord_user_name(discord_user)
 
         text = self._clean_content(message)
         discord_files = message.attachments
@@ -213,10 +223,11 @@ class EasierlitDiscordBridge:
         session = HTTPSession(
             id=str(uuid.uuid4()),
             thread_id=thread_id,
-            user=user,
+            user=session_user,
             client_type="discord",
         )
         ctx = self._init_discord_context(session=session, channel=channel, message=message)
+        should_rebind_after_handler = False
 
         try:
             await self._rebind_discord_thread_owner_to_runtime_auth(
@@ -225,7 +236,8 @@ class EasierlitDiscordBridge:
                 thread_name=thread_name,
                 session_metadata=ctx.session.to_persistable(),
                 bind_thread_to_user=bind_thread_to_user,
-                discord_user=user,
+                discord_user=discord_user,
+                resolved_owner_user_id=resolved_owner_user_id,
             )
 
             file_elements = await download_discord_files(session, discord_files)
@@ -237,7 +249,7 @@ class EasierlitDiscordBridge:
                 content=text,
                 elements=file_elements,
                 type="user_message",
-                author=user.metadata.get("name"),
+                author=discord_author_name,
             )
             await msg.send()
 
@@ -251,7 +263,19 @@ class EasierlitDiscordBridge:
 
             if on_chat_end := config.code.on_chat_end:
                 await on_chat_end()
+        except Exception:
+            should_rebind_after_handler = True
+            raise
         finally:
+            if should_rebind_after_handler:
+                await self._rebind_discord_thread_owner_to_runtime_auth(
+                    thread_id=thread_id,
+                    message=message,
+                    thread_name=thread_name,
+                    bind_thread_to_user=bind_thread_to_user,
+                    discord_user=discord_user,
+                    resolved_owner_user_id=resolved_owner_user_id,
+                )
             await ctx.session.delete()
 
     def _init_discord_context(
@@ -298,7 +322,12 @@ class EasierlitDiscordBridge:
             logger=LOGGER,
         )
 
-    async def _resolve_runtime_auth_owner_user_id(self, data_layer: object) -> str | None:
+    async def _resolve_runtime_auth_owner_user(
+        self, data_layer: object | None
+    ) -> User | PersistedUser | None:
+        if data_layer is None:
+            return None
+
         auth = self._runtime.get_auth()
         if auth is None:
             return None
@@ -310,9 +339,11 @@ class EasierlitDiscordBridge:
             LOGGER.warning("Failed to query owner user '%s' from data layer.", identifier)
             return None
 
-        if persisted_user is not None:
-            resolved_id = getattr(persisted_user, "id", None)
-            return str(resolved_id) if resolved_id is not None else None
+        if isinstance(persisted_user, PersistedUser):
+            return persisted_user
+
+        if persisted_user is not None and self._coerce_user_id(persisted_user) is not None:
+            return persisted_user
 
         if not hasattr(data_layer, "create_user"):
             return None
@@ -328,11 +359,16 @@ class EasierlitDiscordBridge:
             LOGGER.warning("Failed to create owner user '%s' in data layer.", identifier)
             return None
 
-        if created_user is None:
-            return None
+        if isinstance(created_user, PersistedUser):
+            return created_user
 
-        resolved_id = getattr(created_user, "id", None)
-        return str(resolved_id) if resolved_id is not None else None
+        if created_user is not None and self._coerce_user_id(created_user) is not None:
+            return created_user
+        return None
+
+    async def _resolve_runtime_auth_owner_user_id(self, data_layer: object) -> str | None:
+        owner_user = await self._resolve_runtime_auth_owner_user(data_layer)
+        return self._coerce_user_id(owner_user)
 
     async def _rebind_discord_thread_owner_to_runtime_auth(
         self,
@@ -343,17 +379,20 @@ class EasierlitDiscordBridge:
         session_metadata: dict[str, Any] | None = None,
         bind_thread_to_user: bool = False,
         discord_user: User | PersistedUser | None = None,
+        resolved_owner_user_id: str | None = None,
     ) -> None:
         data_layer = self._data_layer_getter()
         if data_layer is None:
             return
 
-        runtime_owner_user_id = await self._resolve_runtime_auth_owner_user_id(data_layer)
-        owner_user_id = self._resolve_discord_thread_owner_user_id(
-            runtime_owner_user_id=runtime_owner_user_id,
-            bind_thread_to_user=bind_thread_to_user,
-            discord_user=discord_user,
-        )
+        owner_user_id = resolved_owner_user_id
+        if owner_user_id is None:
+            runtime_owner_user_id = await self._resolve_runtime_auth_owner_user_id(data_layer)
+            owner_user_id = self._resolve_discord_thread_owner_user_id(
+                runtime_owner_user_id=runtime_owner_user_id,
+                bind_thread_to_user=bind_thread_to_user,
+                discord_user=discord_user,
+            )
 
         metadata: dict[str, object] = {}
         try:
@@ -412,6 +451,108 @@ class EasierlitDiscordBridge:
                 return str(resolved_id)
 
         return None
+
+    def _coerce_user_id(self, user: object | None) -> str | None:
+        if user is None:
+            return None
+        resolved_id = getattr(user, "id", None)
+        if resolved_id is None:
+            return None
+        return str(resolved_id)
+
+    def _resolve_discord_user_name(self, discord_user: object) -> str:
+        metadata = getattr(discord_user, "metadata", None)
+        if isinstance(metadata, dict):
+            candidate = metadata.get("name")
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return self._resolve_author_name(discord_user)
+
+    async def _backfill_all_thread_owners_to_runtime_auth(self) -> None:
+        data_layer = self._data_layer_getter()
+        if data_layer is None:
+            return
+
+        owner_user = await self._resolve_runtime_auth_owner_user(data_layer)
+        owner_user_id = self._coerce_user_id(owner_user)
+        if owner_user_id is None:
+            auth = self._runtime.get_auth()
+            if auth is not None:
+                identifier = auth.identifier or auth.username
+                LOGGER.warning(
+                    "Skipping Discord thread owner backfill because auth owner '%s' could not be resolved.",
+                    identifier,
+                )
+            return
+
+        thread_ids = await self._collect_all_thread_ids_for_backfill(data_layer)
+        if thread_ids is None:
+            LOGGER.warning(
+                "Skipping Discord thread owner backfill for unsupported data layer '%s'.",
+                type(data_layer).__name__,
+            )
+            return
+
+        success_count = 0
+        failure_count = 0
+        for thread_id in thread_ids:
+            try:
+                await data_layer.update_thread(thread_id=thread_id, user_id=owner_user_id)
+                success_count += 1
+            except Exception:
+                failure_count += 1
+                LOGGER.warning(
+                    "Failed to backfill owner for thread '%s'.",
+                    thread_id,
+                )
+
+        LOGGER.info(
+            "Discord thread owner backfill completed: owner_user_id=%s total=%d success=%d failed=%d",
+            owner_user_id,
+            len(thread_ids),
+            success_count,
+            failure_count,
+        )
+
+    async def _collect_all_thread_ids_for_backfill(self, data_layer: object) -> list[str] | None:
+        raw_rows: object
+        try:
+            if hasattr(data_layer, "execute_sql"):
+                raw_rows = await data_layer.execute_sql(
+                    query='SELECT "id" AS id FROM threads',
+                    parameters={},
+                )
+            elif hasattr(data_layer, "execute_query"):
+                raw_rows = await data_layer.execute_query(
+                    query='SELECT id FROM "Thread"',
+                    params={},
+                )
+            else:
+                return None
+        except Exception:
+            LOGGER.warning(
+                "Failed to fetch thread ids for owner backfill using data layer '%s'.",
+                type(data_layer).__name__,
+            )
+            return []
+
+        if not isinstance(raw_rows, list):
+            return []
+
+        ordered_ids: list[str] = []
+        seen_ids: set[str] = set()
+        for row in raw_rows:
+            if not isinstance(row, dict):
+                continue
+            thread_id_value = row.get("id")
+            if thread_id_value is None:
+                continue
+            thread_id = str(thread_id_value)
+            if not thread_id or thread_id in seen_ids:
+                continue
+            seen_ids.add(thread_id)
+            ordered_ids.append(thread_id)
+        return ordered_ids
 
     def _extract_discord_owner_metadata(self, message: discord.Message) -> dict[str, str]:
         metadata: dict[str, str] = {}

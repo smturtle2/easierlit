@@ -348,6 +348,254 @@ def test_owner_rebind_falls_back_to_dm_persisted_user_when_runtime_auth_missing(
     assert updated["metadata"]["easierlit_discord_owner_id"] == "321"
 
 
+def test_start_backfills_all_threads_to_runtime_auth_owner():
+    class _FakeDataLayer:
+        def __init__(self):
+            self.updated_threads: list[tuple[str, str | None]] = []
+
+        async def get_user(self, identifier: str):
+            if identifier == "admin":
+                return PersistedUser(
+                    id="user-admin",
+                    createdAt="2026-02-20T00:00:00.000Z",
+                    identifier="admin",
+                    metadata={"name": "admin"},
+                )
+            return None
+
+        async def create_user(self, _user):
+            raise AssertionError("create_user should not be called")
+
+        async def execute_sql(self, *, query: str, parameters: dict):
+            assert 'SELECT "id" AS id FROM threads' in query
+            assert parameters == {}
+            return [{"id": "thread-1"}, {"id": "thread-2"}]
+
+        async def update_thread(self, thread_id: str, user_id=None, **_kwargs):
+            self.updated_threads.append((thread_id, user_id))
+
+    fake_data_layer = _FakeDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake_data_layer)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake_data_layer)
+    client = EasierlitClient(
+        on_message=lambda _app, _incoming: None,
+        run_funcs=[lambda _app: None],
+        worker_mode="thread",
+    )
+    runtime.bind(
+        client=client,
+        app=app,
+        auth=EasierlitAuthConfig(username="admin", password="admin", identifier="admin"),
+    )
+
+    bridge = EasierlitDiscordBridge(
+        runtime=runtime,
+        bot_token="token",
+        data_layer_getter=lambda: fake_data_layer,
+        client=_FakeDiscordClient(),
+    )
+
+    async def _start_and_stop():
+        await bridge.start()
+        await asyncio.sleep(0)
+        await bridge.stop()
+
+    asyncio.run(_start_and_stop())
+
+    assert fake_data_layer.updated_threads == [
+        ("thread-1", "user-admin"),
+        ("thread-2", "user-admin"),
+    ]
+
+
+def test_start_backfill_continues_when_some_thread_updates_fail():
+    class _FakeDataLayer:
+        def __init__(self):
+            self.update_attempts: list[tuple[str, str | None]] = []
+
+        async def get_user(self, identifier: str):
+            if identifier == "admin":
+                return PersistedUser(
+                    id="user-admin",
+                    createdAt="2026-02-20T00:00:00.000Z",
+                    identifier="admin",
+                    metadata={"name": "admin"},
+                )
+            return None
+
+        async def create_user(self, _user):
+            raise AssertionError("create_user should not be called")
+
+        async def execute_sql(self, *, query: str, parameters: dict):
+            assert 'SELECT "id" AS id FROM threads' in query
+            assert parameters == {}
+            return [{"id": "thread-1"}, {"id": "thread-2"}, {"id": "thread-3"}]
+
+        async def update_thread(self, thread_id: str, user_id=None, **_kwargs):
+            self.update_attempts.append((thread_id, user_id))
+            if thread_id == "thread-2":
+                raise RuntimeError("boom")
+
+    fake_data_layer = _FakeDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake_data_layer)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake_data_layer)
+    client = EasierlitClient(
+        on_message=lambda _app, _incoming: None,
+        run_funcs=[lambda _app: None],
+        worker_mode="thread",
+    )
+    runtime.bind(
+        client=client,
+        app=app,
+        auth=EasierlitAuthConfig(username="admin", password="admin", identifier="admin"),
+    )
+
+    bridge = EasierlitDiscordBridge(
+        runtime=runtime,
+        bot_token="token",
+        data_layer_getter=lambda: fake_data_layer,
+        client=_FakeDiscordClient(),
+    )
+
+    async def _start_and_stop():
+        await bridge.start()
+        await asyncio.sleep(0)
+        await bridge.stop()
+
+    asyncio.run(_start_and_stop())
+
+    assert fake_data_layer.update_attempts == [
+        ("thread-1", "user-admin"),
+        ("thread-2", "user-admin"),
+        ("thread-3", "user-admin"),
+    ]
+
+
+def test_process_discord_message_uses_auth_owner_session_and_keeps_discord_author():
+    import easierlit.discord_bridge as bridge_module
+    from chainlit.config import config
+
+    captured: dict[str, object] = {}
+
+    class _FakeDataLayer:
+        async def get_user(self, identifier: str):
+            if identifier == "admin":
+                return PersistedUser(
+                    id="user-admin",
+                    createdAt="2026-02-20T00:00:00.000Z",
+                    identifier="admin",
+                    metadata={"name": "admin"},
+                )
+            return None
+
+        async def create_user(self, _user):
+            return None
+
+        async def get_thread(self, thread_id: str):
+            return {"id": thread_id, "metadata": {}}
+
+        async def update_thread(self, thread_id: str, user_id=None, metadata=None, name=None, **_kwargs):
+            captured["upsert_user_id"] = user_id
+            captured["upsert_name"] = name
+            captured["upsert_metadata"] = metadata
+
+    class _FakeSession:
+        def to_persistable(self):
+            return {"session": "discord"}
+
+        async def delete(self):
+            return None
+
+    class _Bridge(EasierlitDiscordBridge):
+        def _init_discord_context(self, *, session, channel, message):
+            captured["session_user"] = session.user
+            return SimpleNamespace(session=_FakeSession())
+
+        async def _get_or_create_user(self, _discord_user):
+            return SimpleNamespace(metadata={"name": "discord-user"})
+
+    class _FakeMessage:
+        def __init__(self, **_kwargs):
+            captured["message_author"] = _kwargs.get("author")
+            self.content = _kwargs.get("content", "")
+
+        async def send(self):
+            return self
+
+    class _FakeTyping:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    class _FakeChannel:
+        def typing(self):
+            return _FakeTyping()
+
+    async def _fake_download_discord_files(_session, _attachments):
+        return []
+
+    fake_data_layer = _FakeDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake_data_layer)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake_data_layer)
+    client = EasierlitClient(
+        on_message=lambda _app, _incoming: None,
+        run_funcs=[lambda _app: None],
+        worker_mode="thread",
+    )
+    runtime.bind(
+        client=client,
+        app=app,
+        auth=EasierlitAuthConfig(username="admin", password="admin", identifier="admin"),
+    )
+
+    bridge = _Bridge(
+        runtime=runtime,
+        bot_token="token",
+        data_layer_getter=lambda: fake_data_layer,
+        client=_FakeDiscordClient(),
+    )
+
+    previous_on_chat_start = config.code.on_chat_start
+    previous_on_message = config.code.on_message
+    previous_on_chat_end = config.code.on_chat_end
+    config.code.on_chat_start = None
+    config.code.on_message = None
+    config.code.on_chat_end = None
+
+    message = SimpleNamespace(
+        author=SimpleNamespace(id=321, name="discord-user"),
+        attachments=[],
+        content="hello",
+    )
+    try:
+        with ExitStack() as stack:
+            stack.enter_context(
+                _swap_attr(bridge_module, "download_discord_files", _fake_download_discord_files)
+            )
+            stack.enter_context(_swap_attr(bridge_module, "Message", _FakeMessage))
+            asyncio.run(
+                bridge._process_discord_message(
+                    message=message,
+                    thread_id="thread-1",
+                    thread_name="Thread Name",
+                    channel=_FakeChannel(),
+                    bind_thread_to_user=False,
+                )
+            )
+    finally:
+        config.code.on_chat_start = previous_on_chat_start
+        config.code.on_message = previous_on_message
+        config.code.on_chat_end = previous_on_chat_end
+
+    session_user = captured.get("session_user")
+    assert isinstance(session_user, PersistedUser)
+    assert session_user.id == "user-admin"
+    assert captured["upsert_user_id"] == "user-admin"
+    assert captured["message_author"] == "discord-user"
+
+
 def test_process_discord_message_upserts_owner_before_on_message():
     import easierlit.discord_bridge as bridge_module
     from chainlit.config import config
@@ -607,13 +855,18 @@ def test_process_discord_message_upserts_owner_even_when_handler_raises():
         config.code.on_message = previous_on_message
         config.code.on_chat_end = previous_on_chat_end
 
-    assert len(fake_data_layer.updated_threads) == 1
-    updated = fake_data_layer.updated_threads[0]
-    assert updated["thread_id"] == "thread-1"
-    assert updated["name"] == "Thread Name"
-    assert updated["user_id"] == "user-admin"
-    assert updated["metadata"]["session"] == "discord"
-    assert updated["metadata"]["easierlit_discord_owner_id"] == "321"
+    assert len(fake_data_layer.updated_threads) == 2
+    first_updated = fake_data_layer.updated_threads[0]
+    second_updated = fake_data_layer.updated_threads[1]
+    assert first_updated["thread_id"] == "thread-1"
+    assert first_updated["name"] == "Thread Name"
+    assert first_updated["user_id"] == "user-admin"
+    assert first_updated["metadata"]["session"] == "discord"
+    assert first_updated["metadata"]["easierlit_discord_owner_id"] == "321"
+    assert second_updated["thread_id"] == "thread-1"
+    assert second_updated["name"] == "Thread Name"
+    assert second_updated["user_id"] == "user-admin"
+    assert second_updated["metadata"]["easierlit_discord_owner_id"] == "321"
     assert events[0] == "upsert"
 
 
