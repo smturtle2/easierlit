@@ -79,9 +79,8 @@ EasierlitClient(
     max_message_workers=64,
 )
 
-EasierlitApp.start_thread_task(thread_id)
-EasierlitApp.end_thread_task(thread_id)
-EasierlitApp.is_thread_task_running(thread_id) -> bool
+EasierlitApp.discord_typing_open(thread_id) -> bool
+EasierlitApp.discord_typing_close(thread_id) -> bool
 EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
@@ -230,17 +229,16 @@ External in-process input:
 - `app.enqueue(...)` mirrors input as `user_message` for UI/data-layer visibility and dispatches to `on_message`.
 - Typical usage is webhook/internal integration code that shares the same process.
 
-Thread task-state API:
+Discord typing API:
 
-- `start_thread_task(thread_id)`
-- `end_thread_task(thread_id)`
-- `is_thread_task_running(thread_id) -> bool`
+- `discord_typing_open(thread_id) -> bool`
+- `discord_typing_close(thread_id) -> bool`
 
 Behavior:
 
-- `start_thread_task(...)` marks a thread as working (UI task indicator).
-- `end_thread_task(...)` clears working state (UI task indicator).
-- Easierlit auto-manages task state for each `on_message` execution.
+- `discord_typing_open(...)` starts Discord typing indicator for a mapped Discord thread.
+- `discord_typing_close(...)` stops Discord typing indicator for a mapped Discord thread.
+- Typing is explicit and not auto-managed around `on_message`.
 - Public `lock/unlock` methods are intentionally not exposed.
 
 ## 8. Thread CRUD in App
@@ -261,7 +259,6 @@ Behavior details:
 - `new_thread` auto-generates a unique thread id and returns it.
 - `update_thread` updates only when target thread already exists.
 - `reset_thread` deletes all thread messages and recreates the same thread id while restoring only thread `name`.
-- `delete_thread` and `reset_thread` automatically clear thread task state for that thread.
 - `get_messages` returns thread metadata and one ordered `messages` list.
 - `get_messages` keeps only `user_message`/`assistant_message`/`system_message`/`tool` step types.
 - `get_messages` maps `thread["elements"]` by `forId` aliases: `forId`, `for_id`, `stepId`, `step_id`.

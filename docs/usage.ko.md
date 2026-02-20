@@ -79,9 +79,8 @@ EasierlitClient(
     max_message_workers=64,
 )
 
-EasierlitApp.start_thread_task(thread_id)
-EasierlitApp.end_thread_task(thread_id)
-EasierlitApp.is_thread_task_running(thread_id) -> bool
+EasierlitApp.discord_typing_open(thread_id) -> bool
+EasierlitApp.discord_typing_close(thread_id) -> bool
 EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
@@ -230,17 +229,16 @@ Thread History 표시 조건(Chainlit 정책):
 - `app.enqueue(...)`는 입력을 `user_message`로 UI/data layer에 반영하고 `on_message`로 디스패치합니다.
 - 같은 프로세스에서 동작하는 webhook/내부 연동 코드에 적합합니다.
 
-Thread 작업 상태 API:
+Discord typing API:
 
-- `start_thread_task(thread_id)`
-- `end_thread_task(thread_id)`
-- `is_thread_task_running(thread_id) -> bool`
+- `discord_typing_open(thread_id) -> bool`
+- `discord_typing_close(thread_id) -> bool`
 
 동작:
 
-- `start_thread_task(...)`는 특정 thread를 작업 중(UI indicator) 상태로 표시합니다.
-- `end_thread_task(...)`는 작업 중(UI indicator) 상태를 해제합니다.
-- Easierlit이 각 `on_message` 실행 구간의 task state를 자동 관리합니다.
+- `discord_typing_open(...)`는 Discord 매핑 thread의 typing indicator를 시작합니다.
+- `discord_typing_close(...)`는 Discord 매핑 thread의 typing indicator를 종료합니다.
+- typing 상태는 명시적으로 제어하며 `on_message` 구간 자동 관리가 아닙니다.
 - 공개 `lock/unlock` 메서드는 제공하지 않습니다.
 
 ## 8. App에서 Thread CRUD
@@ -261,7 +259,6 @@ Thread 작업 상태 API:
 - `new_thread`는 고유한 thread id를 자동 생성하고 반환합니다.
 - `update_thread`는 대상 thread가 이미 있을 때만 수정합니다.
 - `reset_thread`는 thread 메시지를 전부 삭제하고 동일한 thread id로 재생성하며 `name`만 복원합니다.
-- `delete_thread`/`reset_thread`는 해당 thread 작업 상태를 자동 해제합니다.
 - `get_messages`는 thread 메타데이터와 순서 보존 `messages` 단일 목록을 반환합니다.
 - `get_messages`는 `user_message`/`assistant_message`/`system_message`/`tool` step 타입만 포함합니다.
 - `get_messages`는 `thread["elements"]`를 `forId` 별칭(`forId`, `for_id`, `stepId`, `step_id`) 기준으로 매핑해 각 message에 `elements`를 포함합니다.

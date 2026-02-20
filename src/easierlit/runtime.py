@@ -95,6 +95,7 @@ class RuntimeRegistry:
         self._init_http_context_fn = init_http_context_fn
         self._utc_now_fn = utc_now_fn
         self._discord_sender: Callable[[int, OutgoingCommand], Awaitable[bool]] | None = None
+        self._discord_typing_state_sender: Callable[[int, bool], Awaitable[bool]] | None = None
 
         self._lock = threading.RLock()
 
@@ -125,6 +126,7 @@ class RuntimeRegistry:
             self._dispatcher_lane_tasks = []
             self._dispatcher_lane_queues = []
             self._discord_sender = None
+            self._discord_typing_state_sender = None
 
     def unbind(self) -> None:
         with self._lock:
@@ -142,6 +144,7 @@ class RuntimeRegistry:
             self._dispatcher_lane_queues = []
             self._max_outgoing_workers = 4
             self._discord_sender = None
+            self._discord_typing_state_sender = None
 
     def get_client(self) -> EasierlitClient | None:
         return self._client
@@ -164,6 +167,13 @@ class RuntimeRegistry:
     ) -> None:
         with self._lock:
             self._discord_sender = sender
+
+    def set_discord_typing_state_sender(
+        self,
+        sender: Callable[[int, bool], Awaitable[bool]] | None,
+    ) -> None:
+        with self._lock:
+            self._discord_typing_state_sender = sender
 
     def set_main_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._main_loop = loop
@@ -373,24 +383,49 @@ class RuntimeRegistry:
 
         return session
 
-    async def set_thread_task_state(self, thread_id: str, is_running: bool) -> bool:
-        session = self._resolve_session(thread_id)
-        if session is None:
+    async def discord_typing_open(self, *, thread_id: str) -> bool:
+        return await self._set_discord_typing_state(thread_id=thread_id, is_running=True)
+
+    async def discord_typing_close(self, *, thread_id: str) -> bool:
+        return await self._set_discord_typing_state(thread_id=thread_id, is_running=False)
+
+    async def _set_discord_typing_state(
+        self,
+        *,
+        thread_id: str,
+        is_running: bool,
+    ) -> bool:
+        if not isinstance(thread_id, str):
             return False
+        normalized_thread_id = thread_id.strip()
+        if not normalized_thread_id:
+            return False
+        discord_channel_id = self.get_discord_channel_for_thread(normalized_thread_id)
+        if discord_channel_id is None:
+            return False
+        return await self._apply_discord_typing_state(
+            thread_id=normalized_thread_id,
+            channel_id=discord_channel_id,
+            is_running=is_running,
+        )
 
+    async def _apply_discord_typing_state(
+        self,
+        *,
+        thread_id: str,
+        channel_id: int,
+        is_running: bool,
+    ) -> bool:
+        sender = self._discord_typing_state_sender
+        if sender is None:
+            return False
         try:
-            from chainlit.context import context, init_ws_context
-
-            init_ws_context(session)
-            if is_running:
-                await context.emitter.task_start()
-            else:
-                await context.emitter.task_end()
-            return True
+            return bool(await sender(channel_id, is_running))
         except Exception:
             LOGGER.exception(
-                "Failed to update task state for thread '%s' (is_running=%s).",
+                "Failed to update Discord typing state for thread '%s' channel '%s' (is_running=%s).",
                 thread_id,
+                channel_id,
                 is_running,
             )
             return False

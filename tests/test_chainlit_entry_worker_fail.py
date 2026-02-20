@@ -219,7 +219,7 @@ def test_on_message_registers_session_for_non_discord_client():
     assert calls == [("thread-1", "session-1")]
 
 
-def test_on_message_dispatches_even_when_thread_task_is_running():
+def test_on_message_dispatches_even_when_thread_state_is_irrelevant():
     runtime = get_runtime()
     app = EasierlitApp()
     client = EasierlitClient(
@@ -228,7 +228,6 @@ def test_on_message_dispatches_even_when_thread_task_is_running():
         worker_mode="thread",
     )
     runtime.bind(client=client, app=app)
-    app.start_thread_task("thread-1")
 
     captured = {"count": 0, "thread_id": None}
     original_dispatch_incoming = runtime.dispatch_incoming

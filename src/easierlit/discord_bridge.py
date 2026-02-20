@@ -17,7 +17,7 @@ from chainlit.message import Message
 from chainlit.user import PersistedUser, User
 from chainlit.user_session import user_session
 
-from .discord_outgoing import send_discord_command
+from .discord_outgoing import resolve_discord_channel, send_discord_command
 from .models import OutgoingCommand
 from .runtime import RuntimeRegistry
 
@@ -51,6 +51,8 @@ class EasierlitDiscordBridge:
         self._started = False
 
         self._users_by_discord_id: dict[int, User | PersistedUser] = {}
+        self._typing_tasks: dict[int, asyncio.Task[None]] = {}
+        self._typing_task_lock = asyncio.Lock()
 
         self._client.event(self._on_ready)
         self._client.event(self._on_message)
@@ -60,6 +62,7 @@ class EasierlitDiscordBridge:
             return
 
         self._runtime.set_discord_sender(self.send_outgoing_command)
+        self._runtime.set_discord_typing_state_sender(self.send_typing_state)
         await self._backfill_all_thread_owners_to_runtime_auth()
         self._started = True
         self._client_task = asyncio.create_task(self._client.start(self._bot_token))
@@ -67,11 +70,13 @@ class EasierlitDiscordBridge:
 
     async def stop(self) -> None:
         self._runtime.set_discord_sender(None)
+        self._runtime.set_discord_typing_state_sender(None)
 
         if not self._started:
             return
 
         self._started = False
+        await self._stop_all_typing_tasks()
         task = self._client_task
         self._client_task = None
 
@@ -322,6 +327,81 @@ class EasierlitDiscordBridge:
             logger=LOGGER,
         )
 
+    async def send_typing_state(self, channel_id: int, is_running: bool) -> bool:
+        if is_running:
+            async with self._typing_task_lock:
+                existing = self._typing_tasks.get(channel_id)
+                if existing is not None and not existing.done():
+                    return True
+                task = asyncio.create_task(self._typing_pulse_loop(channel_id))
+                self._typing_tasks[channel_id] = task
+            return True
+
+        task: asyncio.Task[None] | None = None
+        async with self._typing_task_lock:
+            existing = self._typing_tasks.pop(channel_id, None)
+            if existing is not None:
+                task = existing
+
+        if task is None:
+            return True
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            LOGGER.warning(
+                "Failed to stop Discord typing task for channel '%s'.",
+                channel_id,
+            )
+        return True
+
+    async def _stop_all_typing_tasks(self) -> None:
+        tasks: list[asyncio.Task[None]] = []
+        async with self._typing_task_lock:
+            tasks = list(self._typing_tasks.values())
+            self._typing_tasks.clear()
+
+        for task in tasks:
+            task.cancel()
+        if not tasks:
+            return
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _typing_pulse_loop(self, channel_id: int) -> None:
+        try:
+            while True:
+                channel = await resolve_discord_channel(
+                    client=self._client,
+                    channel_id=channel_id,
+                    logger=LOGGER,
+                )
+                if channel is None:
+                    await asyncio.sleep(2.0)
+                    continue
+
+                typing_cm = channel.typing() if hasattr(channel, "typing") else None
+                if typing_cm is None:
+                    await asyncio.sleep(2.0)
+                    continue
+
+                async with typing_cm:
+                    await asyncio.sleep(8.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.warning(
+                "Discord typing pulse loop failed for channel '%s'.",
+                channel_id,
+            )
+        finally:
+            async with self._typing_task_lock:
+                current_task = self._typing_tasks.get(channel_id)
+                if current_task is asyncio.current_task():
+                    self._typing_tasks.pop(channel_id, None)
+
     async def _resolve_runtime_auth_owner_user(
         self, data_layer: object | None
     ) -> User | PersistedUser | None:
@@ -394,10 +474,12 @@ class EasierlitDiscordBridge:
                 discord_user=discord_user,
             )
 
+        thread_exists = False
         metadata: dict[str, object] = {}
         try:
             thread = await data_layer.get_thread(thread_id)
             if isinstance(thread, dict):
+                thread_exists = True
                 existing_metadata = thread.get("metadata")
                 if isinstance(existing_metadata, dict):
                     metadata.update(existing_metadata)
@@ -410,8 +492,16 @@ class EasierlitDiscordBridge:
                         pass
         except Exception:
             LOGGER.warning(
-                "Failed to read existing thread metadata while upserting Discord thread '%s'.",
-                thread_id,
+                    "Failed to read existing thread metadata while upserting Discord thread '%s'.",
+                    thread_id,
+                )
+
+        if not thread_exists:
+            await self._ensure_thread_row_for_listing(
+                data_layer=data_layer,
+                thread_id=thread_id,
+                user_id=owner_user_id,
+                thread_name=thread_name,
             )
 
         if isinstance(session_metadata, dict):
@@ -432,6 +522,28 @@ class EasierlitDiscordBridge:
         except Exception:
             LOGGER.warning(
                 "Failed to upsert Discord thread '%s' owner metadata.",
+                thread_id,
+            )
+
+    async def _ensure_thread_row_for_listing(
+        self,
+        *,
+        data_layer: object,
+        thread_id: str,
+        user_id: str | None,
+        thread_name: str | None,
+    ) -> None:
+        ensure_kwargs: dict[str, object] = {"thread_id": thread_id}
+        if user_id is not None:
+            ensure_kwargs["user_id"] = user_id
+        if isinstance(thread_name, str) and thread_name.strip():
+            ensure_kwargs["name"] = thread_name
+
+        try:
+            await data_layer.update_thread(**ensure_kwargs)
+        except Exception:
+            LOGGER.warning(
+                "Failed to seed Discord thread '%s' before metadata upsert.",
                 thread_id,
             )
 

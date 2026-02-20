@@ -316,35 +316,6 @@ def test_reset_thread_requires_data_layer():
     with pytest.raises(DataPersistenceNotEnabledError):
         app.reset_thread("thread-1")
 
-
-def test_delete_thread_clears_thread_task_state():
-    fake = FakeDataLayer()
-    app = EasierlitApp(data_layer_getter=lambda: fake)
-
-    app.start_thread_task("thread-1")
-    assert app.is_thread_task_running("thread-1") is True
-
-    app.delete_thread("thread-1")
-
-    assert app.is_thread_task_running("thread-1") is False
-
-
-def test_reset_thread_clears_thread_task_state():
-    fake = FakeDataLayer()
-    runtime = RuntimeRegistry(
-        data_layer_getter=lambda: fake,
-        init_http_context_fn=lambda **_kwargs: None,
-    )
-    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake)
-
-    app.start_thread_task("thread-1")
-    assert app.is_thread_task_running("thread-1") is True
-
-    app.reset_thread("thread-1")
-
-    assert app.is_thread_task_running("thread-1") is False
-
-
 def test_get_messages_preserves_supported_order_and_maps_elements():
     class _FakeDataLayerWithSteps(FakeDataLayer):
         async def get_thread(self, thread_id: str):

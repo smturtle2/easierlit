@@ -151,9 +151,8 @@ EasierlitClient(
     max_message_workers=64,
 )
 
-EasierlitApp.start_thread_task(thread_id)
-EasierlitApp.end_thread_task(thread_id)
-EasierlitApp.is_thread_task_running(thread_id) -> bool
+EasierlitApp.discord_typing_open(thread_id) -> bool
+EasierlitApp.discord_typing_close(thread_id) -> bool
 EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
@@ -257,11 +256,10 @@ Thread APIs:
 - `app.delete_thread(thread_id)`
 - `app.reset_thread(thread_id)`
 
-Thread task-state APIs:
+Discord typing APIs:
 
-- `app.start_thread_task(thread_id)`
-- `app.end_thread_task(thread_id)`
-- `app.is_thread_task_running(thread_id)`
+- `app.discord_typing_open(thread_id)`
+- `app.discord_typing_close(thread_id)`
 
 Behavior highlights:
 
@@ -273,10 +271,9 @@ Behavior highlights:
 - `app.send_to_discord(...)` sends only to Discord and returns `True/False`.
 - `app.send_to_discord(..., elements=[...])` can attach files/images to Discord.
 - `app.is_discord_thread(...)` checks whether a thread is Discord-origin.
-- `app.start_thread_task(...)` marks one thread as working (UI task indicator).
-- `app.end_thread_task(...)` clears working state (UI task indicator).
-- `app.is_thread_task_running(...)` returns current thread working state.
-- Easierlit auto-manages thread task state around each `on_message` execution.
+- `app.discord_typing_open(...)` starts Discord typing indicator for a mapped Discord thread and returns `True/False`.
+- `app.discord_typing_close(...)` stops Discord typing indicator for a mapped Discord thread and returns `True/False`.
+- Discord typing indicator is explicit and is not auto-managed around `on_message`.
 - Async awaitable execution is isolated by role:
 - `run_func` awaitables run on a dedicated runner loop.
 - `on_message` awaitables run on a thread-aware runner pool sized as `min(max_message_workers, 8)`.
@@ -289,7 +286,6 @@ Behavior highlights:
 - `app.get_messages(...)` adds `elements[*].has_source` and `elements[*].source` (`url`/`path`/`bytes`/`objectKey`/`chainlitKey`) for image/file source tracing.
 - `app.new_thread(...)` auto-generates a unique `thread_id` and returns it.
 - `app.update_thread(...)` updates only when thread already exists.
-- `app.delete_thread(...)` and `app.reset_thread(...)` automatically clear thread task state.
 - With auth enabled, both `app.new_thread(...)` and `app.update_thread(...)` auto-assign thread ownership.
 - SQLite SQLAlchemyDataLayer path auto normalizes thread `tags`.
 - If no active websocket session exists, Easierlit applies internal HTTP-context fallback for data-layer message CRUD.

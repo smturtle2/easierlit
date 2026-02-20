@@ -14,9 +14,11 @@ class _CapturingRuntime:
 
 
 class _DiscordRuntime:
-    def __init__(self, *, result: bool):
+    def __init__(self, *, result: bool, typing_result: bool | None = None):
         self.calls: list[tuple[str, str, list[object]]] = []
+        self.typing_calls: list[tuple[str, bool]] = []
         self.result = result
+        self.typing_result = result if typing_result is None else typing_result
 
     async def send_to_discord(
         self,
@@ -27,6 +29,14 @@ class _DiscordRuntime:
     ) -> bool:
         self.calls.append((thread_id, content, elements or []))
         return self.result
+
+    async def discord_typing_open(self, *, thread_id: str) -> bool:
+        self.typing_calls.append((thread_id, True))
+        return self.typing_result
+
+    async def discord_typing_close(self, *, thread_id: str) -> bool:
+        self.typing_calls.append((thread_id, False))
+        return self.typing_result
 
     def run_coroutine_sync(self, coro):
         return asyncio.run(coro)
@@ -280,38 +290,29 @@ def test_send_to_discord_allows_blank_content_when_elements_exist():
     assert runtime.calls == [("thread-1", " ", [{"path": "a.png"}])]
 
 
+def test_discord_typing_open_close_returns_runtime_result():
+    runtime = _DiscordRuntime(result=True)
+    app = EasierlitApp(runtime=runtime)
 
-def test_thread_task_state_api_flow():
-    app = EasierlitApp()
-
-    assert app.is_thread_task_running("thread-1") is False
-
-    app.start_thread_task("thread-1")
-    assert app.is_thread_task_running("thread-1") is True
-
-    app.end_thread_task("thread-1")
-    assert app.is_thread_task_running("thread-1") is False
+    assert app.discord_typing_open("thread-1") is True
+    assert app.discord_typing_close("thread-1") is True
+    assert runtime.typing_calls == [("thread-1", True), ("thread-1", False)]
 
 
+def test_discord_typing_open_close_returns_false_when_runtime_fails():
+    runtime = _DiscordRuntime(result=True, typing_result=False)
+    app = EasierlitApp(runtime=runtime)
 
-def test_thread_task_state_uses_simple_mode_for_repeated_start():
-    app = EasierlitApp()
-
-    app.start_thread_task("thread-1")
-    app.start_thread_task("thread-1")
-    assert app.is_thread_task_running("thread-1") is True
-
-    app.end_thread_task("thread-1")
-    assert app.is_thread_task_running("thread-1") is False
+    assert app.discord_typing_open("thread-1") is False
+    assert app.discord_typing_close("thread-1") is False
+    assert runtime.typing_calls == [("thread-1", True), ("thread-1", False)]
 
 
-
-def test_thread_task_state_validates_non_empty_thread_id():
-    app = EasierlitApp()
+def test_discord_typing_open_close_validates_non_empty_thread_id():
+    runtime = _DiscordRuntime(result=True)
+    app = EasierlitApp(runtime=runtime)
 
     with pytest.raises(ValueError, match="thread_id"):
-        app.start_thread_task(" ")
+        app.discord_typing_open(" ")
     with pytest.raises(ValueError, match="thread_id"):
-        app.end_thread_task(" ")
-    with pytest.raises(ValueError, match="thread_id"):
-        app.is_thread_task_running(" ")
+        app.discord_typing_close(" ")

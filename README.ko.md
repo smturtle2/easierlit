@@ -151,9 +151,8 @@ EasierlitClient(
     max_message_workers=64,
 )
 
-EasierlitApp.start_thread_task(thread_id)
-EasierlitApp.end_thread_task(thread_id)
-EasierlitApp.is_thread_task_running(thread_id) -> bool
+EasierlitApp.discord_typing_open(thread_id) -> bool
+EasierlitApp.discord_typing_close(thread_id) -> bool
 EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
@@ -257,11 +256,10 @@ Thread API:
 - `app.delete_thread(thread_id)`
 - `app.reset_thread(thread_id)`
 
-Thread 작업 상태 API:
+Discord typing API:
 
-- `app.start_thread_task(thread_id)`
-- `app.end_thread_task(thread_id)`
-- `app.is_thread_task_running(thread_id)`
+- `app.discord_typing_open(thread_id)`
+- `app.discord_typing_close(thread_id)`
 
 동작 핵심:
 
@@ -273,10 +271,9 @@ Thread 작업 상태 API:
 - `app.send_to_discord(...)`는 Discord에만 전송하고 `True/False`를 반환합니다.
 - `app.send_to_discord(..., elements=[...])`로 Discord 파일/이미지 첨부 전송이 가능합니다.
 - `app.is_discord_thread(...)`는 해당 thread가 Discord 유입인지 판별합니다.
-- `app.start_thread_task(...)`는 특정 thread를 작업 중(UI indicator) 상태로 표시합니다.
-- `app.end_thread_task(...)`는 해당 thread의 작업 중(UI indicator) 상태를 해제합니다.
-- `app.is_thread_task_running(...)`는 thread 작업 중 상태를 반환합니다.
-- Easierlit은 각 `on_message` 실행 구간에서 thread 작업 상태를 자동으로 관리합니다.
+- `app.discord_typing_open(...)`는 Discord 매핑 thread에 typing indicator를 시작하고 `True/False`를 반환합니다.
+- `app.discord_typing_close(...)`는 Discord 매핑 thread의 typing indicator를 종료하고 `True/False`를 반환합니다.
+- Discord typing indicator는 명시적으로 제어하며 `on_message` 구간 자동 관리가 아닙니다.
 - async awaitable 실행은 역할별로 분리됩니다.
 - `run_func` awaitable은 전용 runner loop에서 실행됩니다.
 - `on_message` awaitable은 `min(max_message_workers, 8)` 크기의 thread-aware runner pool에서 실행됩니다.
@@ -289,7 +286,6 @@ Thread 작업 상태 API:
 - `app.get_messages(...)`은 이미지/파일 source 추적을 위해 `elements[*].has_source`와 `elements[*].source`(`url`/`path`/`bytes`/`objectKey`/`chainlitKey`)를 추가합니다.
 - `app.new_thread(...)`는 고유한 `thread_id`를 자동 생성하고 반환
 - `app.update_thread(...)`는 기존 thread만 수정
-- `app.delete_thread(...)`/`app.reset_thread(...)`는 해당 thread 작업 상태를 자동 해제
 - auth 설정 시 `app.new_thread(...)`/`app.update_thread(...)` 모두 소유자를 자동 귀속
 - SQLite SQLAlchemyDataLayer 경로에서 thread `tags` 자동 정규화
 - active websocket session이 없어도 내부 HTTP-context fallback으로 data-layer message CRUD 수행

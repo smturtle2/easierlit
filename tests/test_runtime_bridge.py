@@ -1,5 +1,4 @@
 import asyncio
-import importlib
 import time
 from types import SimpleNamespace
 
@@ -374,38 +373,42 @@ def test_apply_outgoing_command_respects_explicit_step_type():
     assert fake_data_layer.created_steps[0]["name"] == "Webhook"
 
 
-def test_set_thread_task_state_returns_false_without_session():
+def test_discord_typing_open_close_return_false_without_discord_channel():
     runtime = RuntimeRegistry()
 
-    assert asyncio.run(runtime.set_thread_task_state("thread-1", True)) is False
-    assert asyncio.run(runtime.set_thread_task_state("thread-1", False)) is False
+    assert asyncio.run(runtime.discord_typing_open(thread_id="thread-1")) is False
+    assert asyncio.run(runtime.discord_typing_close(thread_id="thread-1")) is False
 
 
-def test_set_thread_task_state_emits_task_events(monkeypatch):
+def test_discord_typing_open_close_return_false_without_sender():
     runtime = RuntimeRegistry()
-    calls: list[str] = []
+    runtime.register_discord_channel(thread_id="thread-1", channel_id=123)
 
-    class _FakeEmitter:
-        async def task_start(self):
-            calls.append("start")
+    assert asyncio.run(runtime.discord_typing_open(thread_id="thread-1")) is False
+    assert asyncio.run(runtime.discord_typing_close(thread_id="thread-1")) is False
 
-        async def task_end(self):
-            calls.append("end")
 
-    fake_session = SimpleNamespace(id="session-1")
-    monkeypatch.setattr(runtime, "_resolve_session", lambda _thread_id: fake_session)
+def test_discord_typing_open_close_emit_discord_typing_for_discord_thread():
+    runtime = RuntimeRegistry()
+    runtime.register_discord_channel(thread_id="thread-1", channel_id=123)
+    calls: list[tuple[int, bool]] = []
 
-    chainlit_context_module = importlib.import_module("chainlit.context")
-    monkeypatch.setattr(chainlit_context_module, "init_ws_context", lambda _session: None)
-    monkeypatch.setattr(
-        chainlit_context_module,
-        "context",
-        SimpleNamespace(emitter=_FakeEmitter()),
-    )
+    async def _fake_typing_sender(channel_id: int, is_running: bool) -> bool:
+        calls.append((channel_id, is_running))
+        return True
 
-    assert asyncio.run(runtime.set_thread_task_state("thread-1", True)) is True
-    assert asyncio.run(runtime.set_thread_task_state("thread-1", False)) is True
-    assert calls == ["start", "end"]
+    runtime.set_discord_typing_state_sender(_fake_typing_sender)
+
+    assert asyncio.run(runtime.discord_typing_open(thread_id="thread-1")) is True
+    assert asyncio.run(runtime.discord_typing_close(thread_id="thread-1")) is True
+    assert calls == [(123, True), (123, False)]
+
+
+def test_discord_typing_open_close_validate_thread_id():
+    runtime = RuntimeRegistry()
+
+    assert asyncio.run(runtime.discord_typing_open(thread_id=" ")) is False
+    assert asyncio.run(runtime.discord_typing_close(thread_id=" ")) is False
 
 
 def test_resolve_element_payload_uses_to_thread_for_local_file_reads(tmp_path, monkeypatch):

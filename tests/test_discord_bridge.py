@@ -348,6 +348,85 @@ def test_owner_rebind_falls_back_to_dm_persisted_user_when_runtime_auth_missing(
     assert updated["metadata"]["easierlit_discord_owner_id"] == "321"
 
 
+def test_owner_rebind_seeds_missing_thread_before_metadata_upsert():
+    class _FakeDataLayer:
+        def __init__(self):
+            self.updated_threads: list[dict] = []
+            self.threads: dict[str, dict] = {}
+
+        async def get_user(self, identifier: str):
+            if identifier == "admin":
+                return SimpleNamespace(id="user-admin")
+            return None
+
+        async def create_user(self, _user):
+            return None
+
+        async def get_thread(self, thread_id: str):
+            return self.threads.get(thread_id)
+
+        async def update_thread(self, thread_id: str, user_id=None, metadata=None, name=None, **_kwargs):
+            self.updated_threads.append(
+                {
+                    "thread_id": thread_id,
+                    "user_id": user_id,
+                    "metadata": metadata,
+                    "name": name,
+                }
+            )
+            thread = self.threads.setdefault(
+                thread_id,
+                {"id": thread_id, "createdAt": None, "metadata": {}, "userId": None, "name": None},
+            )
+            if metadata is None and thread["createdAt"] is None:
+                thread["createdAt"] = "2026-02-20T00:00:00.000Z"
+            if isinstance(metadata, dict):
+                thread["metadata"].update(metadata)
+            if user_id is not None:
+                thread["userId"] = user_id
+            if name is not None:
+                thread["name"] = name
+
+    fake_data_layer = _FakeDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake_data_layer)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake_data_layer)
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
+    runtime.bind(
+        client=client,
+        app=app,
+        auth=EasierlitAuthConfig(username="admin", password="admin", identifier="admin"),
+    )
+
+    bridge = EasierlitDiscordBridge(
+        runtime=runtime,
+        bot_token="token",
+        data_layer_getter=lambda: fake_data_layer,
+        client=_FakeDiscordClient(),
+    )
+
+    message = SimpleNamespace(author=SimpleNamespace(id=321, name="discord-user"))
+    asyncio.run(
+        bridge._rebind_discord_thread_owner_to_runtime_auth(
+            thread_id="thread-1",
+            message=message,
+            thread_name="Thread Name",
+            session_metadata={"session": "discord"},
+        )
+    )
+
+    assert len(fake_data_layer.updated_threads) == 2
+    first_update = fake_data_layer.updated_threads[0]
+    second_update = fake_data_layer.updated_threads[1]
+    assert first_update["thread_id"] == "thread-1"
+    assert first_update["metadata"] is None
+    assert first_update["user_id"] == "user-admin"
+    assert first_update["name"] == "Thread Name"
+    assert second_update["thread_id"] == "thread-1"
+    assert second_update["user_id"] == "user-admin"
+    assert second_update["metadata"]["session"] == "discord"
+    assert fake_data_layer.threads["thread-1"]["createdAt"] == "2026-02-20T00:00:00.000Z"
+
+
 def test_start_backfills_all_threads_to_runtime_auth_owner():
     class _FakeDataLayer:
         def __init__(self):
@@ -900,6 +979,45 @@ def test_send_outgoing_command_sends_message_and_tool_prefix():
     assert message_result is True
     assert tool_result is True
     assert channel.messages == ["hello", "[Search] running"]
+
+
+def test_send_typing_state_keeps_typing_until_stopped():
+    class _FakeTypingChannel:
+        def __init__(self):
+            self.enter_count = 0
+            self.exit_count = 0
+
+        def typing(self):
+            channel = self
+
+            class _Typing:
+                async def __aenter__(self):
+                    channel.enter_count += 1
+                    return None
+
+                async def __aexit__(self, exc_type, exc, tb):
+                    channel.exit_count += 1
+                    return False
+
+            return _Typing()
+
+    fake_client = _FakeDiscordClient()
+    typing_channel = _FakeTypingChannel()
+    fake_client._channels[777] = typing_channel
+    bridge = EasierlitDiscordBridge(
+        runtime=RuntimeRegistry(),
+        bot_token="token",
+        client=fake_client,
+    )
+
+    async def _scenario():
+        assert await bridge.send_typing_state(777, True) is True
+        await asyncio.sleep(0.05)
+        assert typing_channel.enter_count >= 1
+        assert await bridge.send_typing_state(777, False) is True
+        assert typing_channel.exit_count >= 1
+
+    asyncio.run(_scenario())
 
 
 def test_send_outgoing_command_returns_false_for_unsupported_command():

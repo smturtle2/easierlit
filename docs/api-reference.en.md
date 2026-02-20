@@ -423,7 +423,6 @@ delete_thread(thread_id: str) -> None
 ```
 
 - Deletes thread via data layer.
-- Automatically clears thread task state for that `thread_id`.
 
 ### 4.17 `EasierlitApp.reset_thread`
 
@@ -437,7 +436,6 @@ Behavior:
 - Collects existing step ids and applies immediate `delete` commands via runtime (realtime + data-layer fallback path).
 - Deletes the thread and recreates the same `thread_id`.
 - Restores only thread `name`; recreated thread `metadata` and `tags` are reset.
-- Automatically clears thread task state for that `thread_id`.
 
 Raises:
 
@@ -463,22 +461,20 @@ is_closed() -> bool
 
 - Returns whether app is closed.
 
-### 4.20 Thread Task State APIs
+### 4.20 Discord Typing APIs
 
 ```python
-start_thread_task(thread_id: str) -> None
-end_thread_task(thread_id: str) -> None
-is_thread_task_running(thread_id: str) -> bool
+discord_typing_open(thread_id: str) -> bool
+discord_typing_close(thread_id: str) -> bool
 ```
 
 Behavior:
 
-- `start_thread_task(...)` marks a thread as running (UI task indicator).
-- `end_thread_task(...)` clears running state (UI task indicator).
-- `is_thread_task_running(...)` returns current running state for that thread.
-- Thread id must be a non-empty string for all three methods; blank values raise `ValueError`.
-- State model is simple: repeated `start_thread_task(thread_id)` calls still require only one `end_thread_task(thread_id)` to clear the state.
-- Easierlit auto-manages task state around each `on_message` execution.
+- `discord_typing_open(...)` enables Discord typing indicator for a Discord-mapped thread.
+- `discord_typing_close(...)` disables Discord typing indicator for a Discord-mapped thread.
+- Both methods return `True` on success, `False` when no Discord mapping/sender is available.
+- `thread_id` must be a non-empty string; blank values raise `ValueError`.
+- Typing state is explicit and is not auto-managed around each `on_message` execution.
 - Public `lock/unlock` methods are intentionally not exposed.
 
 ## 5. Config and Data Models
@@ -587,7 +583,7 @@ OutgoingCommand(
 
 - Incoming `on_message(..., incoming)` maps to user-message flow.
 - `app.enqueue(...)` mirrors input as `user_message` and dispatches to on_message.
-- `app.start_thread_task/end_thread_task` controls thread task-state indicator.
+- `app.discord_typing_open/discord_typing_close` controls Discord typing indicator.
 - Outgoing `app.add_message` maps to assistant-message flow.
 - Outgoing `app.add_tool/update_tool` maps to tool-call flow with step name set from `tool_name`.
 - Outgoing `app.add_thought/update_thought` maps to tool-call flow with fixed step name `Reasoning`.
@@ -600,7 +596,7 @@ OutgoingCommand(
 |---|---|
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
 | `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread`, `reset_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
-| `EasierlitApp.start_thread_task`, `end_thread_task`, `is_thread_task_running` | No dedicated example yet (runtime/manual control APIs) |
+| `EasierlitApp.discord_typing_open`, `discord_typing_close` | No dedicated example yet (runtime/manual control APIs) |
 | `EasierlitApp.enqueue` | In-process integrations that mirror input as `user_message` and dispatch to `on_message` |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |

@@ -84,36 +84,6 @@ def test_dispatcher_respects_global_worker_limit():
     client.stop()
 
 
-
-def test_dispatcher_auto_manages_thread_task_state():
-    app = EasierlitApp()
-    release = threading.Event()
-    entered = threading.Event()
-
-    def on_message(_app: EasierlitApp, incoming: IncomingMessage) -> None:
-        assert _app.is_thread_task_running(incoming.thread_id) is True
-        entered.set()
-        release.wait(timeout=2.0)
-
-    client = EasierlitClient(on_message=on_message)
-    client.run(app)
-
-    thread_id = "thread-1"
-    client.dispatch_incoming(_incoming(thread_id, "msg-1", "hello"))
-    assert entered.wait(timeout=1.0)
-    assert app.is_thread_task_running(thread_id) is True
-
-    release.set()
-    for _ in range(50):
-        if app.is_thread_task_running(thread_id) is False:
-            break
-        time.sleep(0.01)
-
-    assert app.is_thread_task_running(thread_id) is False
-    client.stop()
-
-
-
 def test_dispatcher_treats_handler_errors_as_fatal():
     app = EasierlitApp()
 

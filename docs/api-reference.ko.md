@@ -423,7 +423,6 @@ delete_thread(thread_id: str) -> None
 ```
 
 - data layer를 통해 thread 삭제
-- 해당 `thread_id`의 thread 작업 상태를 자동 해제
 
 ### 4.17 `EasierlitApp.reset_thread`
 
@@ -437,7 +436,6 @@ reset_thread(thread_id: str) -> None
 - 기존 step id를 수집해 runtime 경로(realtime + data-layer fallback)로 `delete` command를 즉시 적용
 - thread를 삭제한 뒤 동일한 `thread_id`로 재생성
 - 재생성 시 `name`만 복원하고 `metadata`/`tags`는 초기화
-- 해당 `thread_id`의 thread 작업 상태를 자동 해제
 
 예외:
 
@@ -463,22 +461,20 @@ is_closed() -> bool
 
 - app closed 상태 반환
 
-### 4.20 Thread 작업 상태 API
+### 4.20 Discord Typing API
 
 ```python
-start_thread_task(thread_id: str) -> None
-end_thread_task(thread_id: str) -> None
-is_thread_task_running(thread_id: str) -> bool
+discord_typing_open(thread_id: str) -> bool
+discord_typing_close(thread_id: str) -> bool
 ```
 
 동작:
 
-- `start_thread_task(...)`는 특정 thread를 작업 중(UI indicator)으로 표시
-- `end_thread_task(...)`는 작업 중(UI indicator) 상태를 해제
-- `is_thread_task_running(...)`는 해당 thread의 작업 중 상태를 반환
-- 세 메서드 모두 `thread_id`는 비어 있지 않은 문자열이어야 하며 공백 문자열은 `ValueError`
-- 상태 모델은 단순 모드이며 `start_thread_task(thread_id)`를 여러 번 호출해도 `end_thread_task(thread_id)` 1회면 상태 해제
-- Easierlit이 각 `on_message` 실행 구간의 task state를 자동 관리
+- `discord_typing_open(...)`는 Discord 매핑 thread의 typing indicator를 시작
+- `discord_typing_close(...)`는 Discord 매핑 thread의 typing indicator를 종료
+- 두 메서드 모두 성공 시 `True`, Discord 매핑/typing sender 부재 시 `False` 반환
+- 두 메서드 모두 `thread_id`는 비어 있지 않은 문자열이어야 하며 공백 문자열은 `ValueError`
+- typing 상태는 `on_message` 실행 구간에서 자동 관리되지 않고 명시적으로 제어됨
 - 공개 `lock/unlock` 메서드는 제공하지 않음
 
 ## 5. 설정 및 데이터 모델
@@ -587,7 +583,7 @@ OutgoingCommand(
 
 - `on_message(..., incoming)` 입력은 user-message 흐름
 - `app.enqueue(...)`는 입력을 `user_message`로 미러링하고 on_message로 디스패치
-- `app.start_thread_task/end_thread_task`는 thread 작업 상태 indicator를 제어
+- `app.discord_typing_open/discord_typing_close`는 Discord typing indicator를 제어
 - `app.add_message` 출력은 assistant-message 흐름
 - `app.add_tool/update_tool` 출력은 tool-call 흐름이며 step name은 `tool_name` 사용
 - `app.add_thought/update_thought` 출력은 tool-call 흐름이며 step name은 `Reasoning` 고정
@@ -600,7 +596,7 @@ OutgoingCommand(
 |---|---|
 | `EasierlitClient.run`, `stop` | `examples/minimal.py` |
 | `EasierlitApp.list_threads`, `get_thread`, `get_messages`, `new_thread`, `update_thread`, `delete_thread`, `reset_thread` | `examples/thread_crud.py`, `examples/thread_create_in_run_func.py` |
-| `EasierlitApp.start_thread_task`, `end_thread_task`, `is_thread_task_running` | 전용 예제 없음 (런타임/수동 제어 API) |
+| `EasierlitApp.discord_typing_open`, `discord_typing_close` | 전용 예제 없음 (런타임/수동 제어 API) |
 | `EasierlitApp.enqueue` | 외부 입력을 `user_message`로 미러링하고 `on_message`로 디스패치하는 in-process 연동 |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |

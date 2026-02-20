@@ -317,7 +317,6 @@ class EasierlitClient:
     def _message_worker_entry(self, app: EasierlitApp, incoming: IncomingMessage) -> None:
         awaitable_runner = self._resolve_message_awaitable_runner(incoming.thread_id)
         try:
-            app.start_thread_task(incoming.thread_id)
             _execute_on_message(
                 self.on_message,
                 app,
@@ -332,14 +331,6 @@ class EasierlitClient:
                 app=app,
             )
         finally:
-            try:
-                app.end_thread_task(incoming.thread_id)
-            except Exception:
-                LOGGER.exception(
-                    "Failed to end thread task state for thread '%s'.",
-                    incoming.thread_id,
-                )
-
             with self._message_scheduler_lock:
                 self._active_message_worker_count = max(0, self._active_message_worker_count - 1)
                 self._active_chat_threads.discard(incoming.thread_id)
