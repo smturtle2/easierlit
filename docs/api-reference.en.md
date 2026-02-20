@@ -56,6 +56,7 @@ Behavior:
 - Resolves Discord token as `bot_token` first, then `DISCORD_BOT_TOKEN` fallback.
 - Runs Discord through Easierlit's own bridge (no runtime monkeypatching of Chainlit Discord handlers).
 - Does not clear `DISCORD_BOT_TOKEN` during `serve()`; the env value remains unchanged.
+- Suppresses Chainlit built-in Discord autostart while Easierlit is running to avoid duplicate Discord replies.
 - Restores previous `CHAINLIT_AUTH_COOKIE_NAME` and `CHAINLIT_AUTH_SECRET` after shutdown.
 - On shutdown, calls `client.stop()` and unbinds runtime.
 - Uses fail-fast policy on worker crash.

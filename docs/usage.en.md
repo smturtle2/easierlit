@@ -205,6 +205,7 @@ Discord token resolution policy:
 - Discord inbound attachments are normalized into elements and persisted via the existing storage/data-layer path.
 - Easierlit runs Discord via its own bridge (no runtime monkeypatching of Chainlit Discord handlers).
 - During `serve()`, Easierlit does not clear `DISCORD_BOT_TOKEN`; the env value remains unchanged.
+- During Easierlit runtime, Chainlit built-in Discord autostart is suppressed to prevent duplicate Discord responses.
 
 Thread History visibility follows Chainlit policy:
 

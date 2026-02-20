@@ -205,6 +205,7 @@ Discord 토큰 해석 정책:
 - Discord 유입 첨부파일은 element로 정규화되어 기존 storage/data layer 경로로 저장됩니다
 - Easierlit은 자체 Discord bridge로 동작하며 Chainlit Discord handler를 런타임에 monkeypatch하지 않음
 - `serve()` 동안 Easierlit은 `DISCORD_BOT_TOKEN`을 비우지 않으며 env 값은 그대로 유지
+- Easierlit 런타임 동안에는 Discord 중복 응답 방지를 위해 Chainlit 내장 Discord 자동기동을 억제
 
 Thread History 표시 조건(Chainlit 정책):
 

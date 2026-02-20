@@ -56,6 +56,7 @@ serve() -> None
 - Discord 토큰 해석 순서: `bot_token` 우선, 없으면 `DISCORD_BOT_TOKEN` 폴백
 - Chainlit Discord handler를 런타임 monkeypatch하지 않고 Easierlit 자체 Discord bridge를 사용
 - `serve()` 동안 `DISCORD_BOT_TOKEN`을 비우지 않으며 env 값은 그대로 유지
+- Easierlit 실행 중에는 Discord 중복 응답 방지를 위해 Chainlit 내장 Discord 자동기동을 억제
 - 종료 시 `CHAINLIT_AUTH_COOKIE_NAME`/`CHAINLIT_AUTH_SECRET`도 기존 env 값으로 복원
 - 종료 시 `client.stop()` 호출 후 runtime unbind
 - 워커 크래시에 대해 fail-fast 정책 적용

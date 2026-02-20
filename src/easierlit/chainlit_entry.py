@@ -44,6 +44,9 @@ _DISCORD_BRIDGE: EasierlitDiscordBridge | None = None
 _DEFAULT_DATA_LAYER_REGISTERED = False
 _LOCAL_STORAGE_ROUTE_REGISTERED = False
 _LOCAL_STORAGE_PROVIDER: LocalFileStorageClient | None = None
+_CHAINLIT_DISCORD_CLIENT = None
+_CHAINLIT_DISCORD_START_ORIGINAL = None
+_CHAINLIT_DISCORD_AUTOSTART_SUPPRESSED = False
 
 
 def _summarize_worker_error(traceback_text: str) -> str:
@@ -51,6 +54,58 @@ def _summarize_worker_error(traceback_text: str) -> str:
     if lines:
         return lines[-1]
     return "Unknown run_func error"
+
+
+def _resolve_chainlit_discord_client():
+    from chainlit.discord.app import client as chainlit_discord_client
+
+    return chainlit_discord_client
+
+
+def _suppress_chainlit_discord_autostart() -> None:
+    global _CHAINLIT_DISCORD_CLIENT, _CHAINLIT_DISCORD_START_ORIGINAL
+    global _CHAINLIT_DISCORD_AUTOSTART_SUPPRESSED
+
+    if _CHAINLIT_DISCORD_AUTOSTART_SUPPRESSED:
+        return
+
+    try:
+        chainlit_discord_client = _resolve_chainlit_discord_client()
+    except Exception:
+        return
+
+    start_method = getattr(chainlit_discord_client, "start", None)
+    if not callable(start_method):
+        return
+
+    async def _disabled_start(*_args, **_kwargs):
+        return None
+
+    _CHAINLIT_DISCORD_CLIENT = chainlit_discord_client
+    _CHAINLIT_DISCORD_START_ORIGINAL = start_method
+    setattr(chainlit_discord_client, "start", _disabled_start)
+    _CHAINLIT_DISCORD_AUTOSTART_SUPPRESSED = True
+    LOGGER.info("Chainlit built-in Discord autostart suppressed; Easierlit bridge is active.")
+
+
+def _restore_chainlit_discord_autostart() -> None:
+    global _CHAINLIT_DISCORD_CLIENT, _CHAINLIT_DISCORD_START_ORIGINAL
+    global _CHAINLIT_DISCORD_AUTOSTART_SUPPRESSED
+
+    if not _CHAINLIT_DISCORD_AUTOSTART_SUPPRESSED:
+        return
+
+    chainlit_discord_client = _CHAINLIT_DISCORD_CLIENT
+    original_start = _CHAINLIT_DISCORD_START_ORIGINAL
+    if chainlit_discord_client is not None and callable(original_start):
+        try:
+            setattr(chainlit_discord_client, "start", original_start)
+        except Exception:
+            LOGGER.exception("Failed to restore Chainlit built-in Discord autostart.")
+
+    _CHAINLIT_DISCORD_CLIENT = None
+    _CHAINLIT_DISCORD_START_ORIGINAL = None
+    _CHAINLIT_DISCORD_AUTOSTART_SUPPRESSED = False
 
 
 def _register_discord_channel_for_current_session() -> None:
@@ -304,6 +359,7 @@ async def _stop_discord_bridge_if_running() -> None:
 @cl.on_app_startup
 async def _on_app_startup() -> None:
     global _APP_CLOSED_WARNING_EMITTED, _WORKER_FAILURE_UI_NOTIFIED
+    _suppress_chainlit_discord_autostart()
     _apply_runtime_configuration()
     _APP_CLOSED_WARNING_EMITTED = False
     _WORKER_FAILURE_UI_NOTIFIED = False
@@ -338,8 +394,11 @@ async def _on_app_shutdown() -> None:
     global _APP_CLOSED_WARNING_EMITTED, _CONFIG_APPLIED, _WORKER_FAILURE_UI_NOTIFIED
     global _DEFAULT_DATA_LAYER_REGISTERED, _LOCAL_STORAGE_PROVIDER
 
-    await _stop_discord_bridge_if_running()
-    await RUNTIME.stop_dispatcher()
+    try:
+        await _stop_discord_bridge_if_running()
+        await RUNTIME.stop_dispatcher()
+    finally:
+        _restore_chainlit_discord_autostart()
 
     client = RUNTIME.get_client()
     if client is None:

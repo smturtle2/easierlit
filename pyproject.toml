@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "easierlit"
-version = "1.2.10"
+version = "1.2.11"
 description = "A minimal library to make Chainlit easier to use."
 readme = "README.md"
 requires-python = ">=3.13"

@@ -233,6 +233,7 @@ Discord bot setup:
 - Discord inbound attachments are normalized into elements and persisted through the existing storage/data-layer path.
 - Easierlit runs Discord through its own bridge (no runtime monkeypatching of Chainlit Discord handlers).
 - During `serve()`, Easierlit does not clear `DISCORD_BOT_TOKEN`; the env value remains unchanged.
+- During Easierlit runtime, Chainlit built-in Discord autostart is suppressed to avoid duplicate Discord replies.
 - If enabled and no non-empty token is available, `serve()` raises `ValueError`.
 
 ## Message and Thread Operations
