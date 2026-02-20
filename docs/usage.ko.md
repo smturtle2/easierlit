@@ -86,6 +86,7 @@ EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", m
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name은 "Reasoning" 고정
+EasierlitApp.send_to_discord(thread_id, content) -> bool
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None)
 EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # tool_name은 "Reasoning" 고정
@@ -197,6 +198,8 @@ Discord 토큰 해석 정책:
 - `EasierlitDiscordConfig.bot_token`이 비어 있지 않으면 우선 사용
 - config token이 없으면 `DISCORD_BOT_TOKEN`을 폴백으로 사용
 - Discord 활성화 상태에서 유효 토큰이 없으면 `serve()`가 `ValueError` 발생
+- Discord 응답은 `app.send_to_discord(...)`로 명시적으로 전송
+- Discord 유입 thread는 Thread History 노출 안정성을 위해 runtime auth 사용자로 우선 귀속
 - Easierlit은 자체 Discord bridge로 동작하며 Chainlit Discord handler를 런타임에 monkeypatch하지 않음
 - `serve()` 동안 Easierlit은 `DISCORD_BOT_TOKEN`을 비우지 않으며 env 값은 그대로 유지
 
@@ -271,6 +274,7 @@ Thread 작업 상태 API:
 
 - `app.add_message(...)`, `app.update_message(...)`, `app.delete_message(...)`
 - `app.add_tool(...)`, `app.add_thought(...)`, `app.update_tool(...)`, `app.update_thought(...)`
+- Discord 전용 응답은 `app.send_to_discord(...)` 사용
 
 실행 모델:
 
@@ -279,6 +283,8 @@ Thread 작업 상태 API:
 3. fallback 전에 내부 HTTP Chainlit context를 초기화
 4. session/data layer 모두 없으면 queued command 적용 시 `ThreadSessionNotActiveError` 발생
 5. outgoing command는 `thread_id` lane 단위로 병렬 처리되며 같은 thread 순서는 유지되고 thread 간 완료 순서는 달라질 수 있음
+6. `app.add_message(...)`/`app.add_tool(...)`/`app.add_thought(...)`는 Discord로 자동 전송되지 않음
+7. Discord 응답이 필요하면 `app.send_to_discord(...)`를 명시적으로 호출
 
 ## 10. run_func에서 새 thread 생성
 
@@ -313,6 +319,7 @@ Easierlit 매핑:
 - `app.add_message()` 출력은 assistant 메시지 흐름
 - `app.add_tool()/app.update_tool()` 출력은 tool-call 흐름이며 step name=`tool_name`
 - `app.add_thought()/app.update_thought()` 출력은 tool-call 흐름이며 step name=`Reasoning` 고정
+- `app.send_to_discord()`는 step 저장 없이 Discord 출력만 전송
 
 UI 옵션 참고(Chainlit): `ui.cot`는 `full`, `tool_call`, `hidden`을 지원합니다.
 

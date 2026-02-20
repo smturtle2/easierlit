@@ -3,9 +3,12 @@ import uuid
 from contextlib import ExitStack, contextmanager
 from types import SimpleNamespace
 
+import pytest
+
 from easierlit import EasierlitApp, EasierlitAuthConfig, EasierlitClient
 from easierlit.discord_bridge import EasierlitDiscordBridge
 from easierlit.runtime import RuntimeRegistry
+from chainlit.user import PersistedUser
 
 
 @contextmanager
@@ -284,6 +287,331 @@ def test_owner_rebind_uses_runtime_auth_and_merges_metadata():
     assert updated["metadata"]["existing"] == "keep"
     assert updated["metadata"]["easierlit_discord_owner_id"] == "321"
     assert updated["metadata"]["easierlit_discord_owner_name"] == "discord-user"
+
+
+def test_owner_rebind_falls_back_to_dm_persisted_user_when_runtime_auth_missing():
+    class _FakeDataLayer:
+        def __init__(self):
+            self.updated_threads = []
+
+        async def get_user(self, _identifier: str):
+            return None
+
+        async def create_user(self, _user):
+            return None
+
+        async def get_thread(self, thread_id: str):
+            return {"id": thread_id, "metadata": {}}
+
+        async def update_thread(self, thread_id: str, user_id=None, metadata=None, **_kwargs):
+            self.updated_threads.append(
+                {
+                    "thread_id": thread_id,
+                    "user_id": user_id,
+                    "metadata": metadata,
+                }
+            )
+
+    fake_data_layer = _FakeDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake_data_layer)
+
+    bridge = EasierlitDiscordBridge(
+        runtime=runtime,
+        bot_token="token",
+        data_layer_getter=lambda: fake_data_layer,
+        client=_FakeDiscordClient(),
+    )
+
+    message = SimpleNamespace(author=SimpleNamespace(id=321, name="discord-user"))
+    persisted_dm_user = PersistedUser(
+        id="user-dm",
+        createdAt="2026-02-20T00:00:00.000Z",
+        identifier="discord-user",
+        metadata={"name": "discord-user"},
+    )
+    asyncio.run(
+        bridge._rebind_discord_thread_owner_to_runtime_auth(
+            thread_id="thread-1",
+            message=message,
+            bind_thread_to_user=True,
+            discord_user=persisted_dm_user,
+        )
+    )
+
+    assert len(fake_data_layer.updated_threads) == 1
+    updated = fake_data_layer.updated_threads[0]
+    assert updated["thread_id"] == "thread-1"
+    assert updated["user_id"] == "user-dm"
+    assert updated["metadata"]["easierlit_discord_owner_id"] == "321"
+
+
+def test_process_discord_message_upserts_owner_before_on_message():
+    import easierlit.discord_bridge as bridge_module
+    from chainlit.config import config
+
+    events: list[str] = []
+
+    class _FakeDataLayer:
+        def __init__(self):
+            self.updated_threads = []
+
+        async def get_user(self, identifier: str):
+            if identifier == "admin":
+                return SimpleNamespace(id="user-admin")
+            return None
+
+        async def create_user(self, _user):
+            return None
+
+        async def get_thread(self, thread_id: str):
+            return {"id": thread_id, "metadata": {"existing": "keep"}}
+
+        async def update_thread(self, thread_id: str, user_id=None, metadata=None, name=None, **_kwargs):
+            events.append("upsert")
+            self.updated_threads.append(
+                {
+                    "thread_id": thread_id,
+                    "user_id": user_id,
+                    "metadata": metadata,
+                    "name": name,
+                }
+            )
+
+    class _FakeSession:
+        def to_persistable(self):
+            return {"session": "discord"}
+
+        async def delete(self):
+            events.append("session_delete")
+
+    class _Bridge(EasierlitDiscordBridge):
+        def _init_discord_context(self, *, session, channel, message):
+            return SimpleNamespace(session=_FakeSession())
+
+        async def _get_or_create_user(self, _discord_user):
+            return SimpleNamespace(metadata={"name": "discord-user"})
+
+    class _FakeMessage:
+        def __init__(self, **_kwargs):
+            self.content = _kwargs.get("content", "")
+
+        async def send(self):
+            events.append("message_send")
+            return self
+
+    class _FakeTyping:
+        async def __aenter__(self):
+            events.append("typing_enter")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            events.append("typing_exit")
+
+    class _FakeChannel:
+        def typing(self):
+            return _FakeTyping()
+
+    async def _fake_download_discord_files(_session, _attachments):
+        return []
+
+    async def _fake_on_chat_start():
+        events.append("on_chat_start")
+
+    async def _fake_on_message(_msg):
+        events.append("on_message")
+
+    async def _fake_on_chat_end():
+        events.append("on_chat_end")
+
+    fake_data_layer = _FakeDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake_data_layer)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake_data_layer)
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
+    runtime.bind(
+        client=client,
+        app=app,
+        auth=EasierlitAuthConfig(username="admin", password="admin", identifier="admin"),
+    )
+
+    bridge = _Bridge(
+        runtime=runtime,
+        bot_token="token",
+        data_layer_getter=lambda: fake_data_layer,
+        client=_FakeDiscordClient(),
+    )
+
+    previous_on_chat_start = config.code.on_chat_start
+    previous_on_message = config.code.on_message
+    previous_on_chat_end = config.code.on_chat_end
+    config.code.on_chat_start = _fake_on_chat_start
+    config.code.on_message = _fake_on_message
+    config.code.on_chat_end = _fake_on_chat_end
+
+    message = SimpleNamespace(
+        author=SimpleNamespace(id=321, name="discord-user"),
+        attachments=[],
+        content="hello",
+    )
+    try:
+        with ExitStack() as stack:
+            stack.enter_context(
+                _swap_attr(bridge_module, "download_discord_files", _fake_download_discord_files)
+            )
+            stack.enter_context(_swap_attr(bridge_module, "Message", _FakeMessage))
+            asyncio.run(
+                bridge._process_discord_message(
+                    message=message,
+                    thread_id="thread-1",
+                    thread_name="Thread Name",
+                    channel=_FakeChannel(),
+                    bind_thread_to_user=False,
+                )
+            )
+    finally:
+        config.code.on_chat_start = previous_on_chat_start
+        config.code.on_message = previous_on_message
+        config.code.on_chat_end = previous_on_chat_end
+
+    assert len(fake_data_layer.updated_threads) == 1
+    updated = fake_data_layer.updated_threads[0]
+    assert updated["thread_id"] == "thread-1"
+    assert updated["name"] == "Thread Name"
+    assert updated["user_id"] == "user-admin"
+    assert updated["metadata"]["existing"] == "keep"
+    assert updated["metadata"]["session"] == "discord"
+    assert updated["metadata"]["easierlit_discord_owner_id"] == "321"
+    assert events.index("upsert") < events.index("on_message")
+
+
+def test_process_discord_message_upserts_owner_even_when_handler_raises():
+    import easierlit.discord_bridge as bridge_module
+    from chainlit.config import config
+
+    events: list[str] = []
+
+    class _FakeDataLayer:
+        def __init__(self):
+            self.updated_threads = []
+
+        async def get_user(self, identifier: str):
+            if identifier == "admin":
+                return SimpleNamespace(id="user-admin")
+            return None
+
+        async def create_user(self, _user):
+            return None
+
+        async def get_thread(self, thread_id: str):
+            return {"id": thread_id, "metadata": {}}
+
+        async def update_thread(self, thread_id: str, user_id=None, metadata=None, name=None, **_kwargs):
+            events.append("upsert")
+            self.updated_threads.append(
+                {
+                    "thread_id": thread_id,
+                    "user_id": user_id,
+                    "metadata": metadata,
+                    "name": name,
+                }
+            )
+
+    class _FakeSession:
+        def to_persistable(self):
+            return {"session": "discord"}
+
+        async def delete(self):
+            events.append("session_delete")
+
+    class _Bridge(EasierlitDiscordBridge):
+        def _init_discord_context(self, *, session, channel, message):
+            return SimpleNamespace(session=_FakeSession())
+
+        async def _get_or_create_user(self, _discord_user):
+            return SimpleNamespace(metadata={"name": "discord-user"})
+
+    class _FakeMessage:
+        def __init__(self, **_kwargs):
+            self.content = _kwargs.get("content", "")
+
+        async def send(self):
+            events.append("message_send")
+            return self
+
+    class _FakeTyping:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    class _FakeChannel:
+        def typing(self):
+            return _FakeTyping()
+
+    async def _fake_download_discord_files(_session, _attachments):
+        return []
+
+    async def _fake_on_message(_msg):
+        events.append("on_message")
+        raise RuntimeError("boom")
+
+    fake_data_layer = _FakeDataLayer()
+    runtime = RuntimeRegistry(data_layer_getter=lambda: fake_data_layer)
+    app = EasierlitApp(runtime=runtime, data_layer_getter=lambda: fake_data_layer)
+    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None], worker_mode="thread")
+    runtime.bind(
+        client=client,
+        app=app,
+        auth=EasierlitAuthConfig(username="admin", password="admin", identifier="admin"),
+    )
+
+    bridge = _Bridge(
+        runtime=runtime,
+        bot_token="token",
+        data_layer_getter=lambda: fake_data_layer,
+        client=_FakeDiscordClient(),
+    )
+
+    previous_on_chat_start = config.code.on_chat_start
+    previous_on_message = config.code.on_message
+    previous_on_chat_end = config.code.on_chat_end
+    config.code.on_chat_start = None
+    config.code.on_message = _fake_on_message
+    config.code.on_chat_end = None
+
+    message = SimpleNamespace(
+        author=SimpleNamespace(id=321, name="discord-user"),
+        attachments=[],
+        content="hello",
+    )
+    try:
+        with ExitStack() as stack:
+            stack.enter_context(
+                _swap_attr(bridge_module, "download_discord_files", _fake_download_discord_files)
+            )
+            stack.enter_context(_swap_attr(bridge_module, "Message", _FakeMessage))
+            with pytest.raises(RuntimeError, match="boom"):
+                asyncio.run(
+                    bridge._process_discord_message(
+                        message=message,
+                        thread_id="thread-1",
+                        thread_name="Thread Name",
+                        channel=_FakeChannel(),
+                        bind_thread_to_user=False,
+                    )
+                )
+    finally:
+        config.code.on_chat_start = previous_on_chat_start
+        config.code.on_message = previous_on_message
+        config.code.on_chat_end = previous_on_chat_end
+
+    assert len(fake_data_layer.updated_threads) == 1
+    updated = fake_data_layer.updated_threads[0]
+    assert updated["thread_id"] == "thread-1"
+    assert updated["name"] == "Thread Name"
+    assert updated["user_id"] == "user-admin"
+    assert updated["metadata"]["session"] == "discord"
+    assert updated["metadata"]["easierlit_discord_owner_id"] == "321"
+    assert events[0] == "upsert"
 
 
 def test_send_outgoing_command_sends_message_and_tool_prefix():

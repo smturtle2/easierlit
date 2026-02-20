@@ -199,6 +199,7 @@ add_message(
 - `add_message` outgoing command를 큐에 적재
 - `elements`로 전달된 Chainlit element 객체(이미지/파일 등)를 runtime으로 전달
 - 생성된 `message_id` 반환
+- 이 호출은 Discord로 자동 전송하지 않음
 - 실제 반영은 runtime dispatcher에서 수행
 - runtime dispatcher는 같은 `thread_id` 내 outgoing 순서는 보장하지만 thread 간 전역 outgoing 순서는 보장하지 않음
 
@@ -230,6 +231,20 @@ add_thought(
 ```
 
 - `tool_name="Reasoning"` 고정값으로 `add_tool(...)`을 호출하는 래퍼
+
+### 4.6.1 `EasierlitApp.send_to_discord`
+
+```python
+send_to_discord(
+    thread_id: str,
+    content: str,
+) -> bool
+```
+
+- `thread_id`에 매핑된 Discord channel로만 내용을 전송
+- 전송 성공 시 `True`, channel 미등록/전송 실패 시 `False` 반환
+- `thread_id` 또는 `content`가 공백이면 `ValueError`
+- Chainlit step/data-layer 레코드는 생성/수정하지 않음
 
 ### 4.7 `EasierlitApp.update_message`
 
@@ -561,6 +576,7 @@ OutgoingCommand(
 - `app.add_message` 출력은 assistant-message 흐름
 - `app.add_tool/update_tool` 출력은 tool-call 흐름이며 step name은 `tool_name` 사용
 - `app.add_thought/update_thought` 출력은 tool-call 흐름이며 step name은 `Reasoning` 고정
+- `app.send_to_discord`는 Discord 전용 출력 경로이며 step 저장이 없음
 
 ## 8. Method-to-Example 인덱스
 
@@ -572,5 +588,6 @@ OutgoingCommand(
 | `EasierlitApp.enqueue` | 외부 입력을 `user_message`로 미러링하고 `on_message`로 디스패치하는 in-process 연동 |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
+| `EasierlitApp.send_to_discord` | `examples/discord_bot.py` |
 | 인증/영속성 설정 | `examples/custom_auth.py` |
 | Discord 설정 | `examples/discord_bot.py` |

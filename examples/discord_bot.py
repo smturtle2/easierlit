@@ -2,10 +2,15 @@ from easierlit import EasierlitClient, EasierlitDiscordConfig, EasierlitServer
 
 
 def on_message(app, incoming):
+    reply = f"Discord echo: {incoming.content}"
     app.add_message(
         thread_id=incoming.thread_id,
-        content=f"Discord echo: {incoming.content}",
+        content=reply,
         author="DiscordBot",
+    )
+    app.send_to_discord(
+        thread_id=incoming.thread_id,
+        content=reply,
     )
 
 

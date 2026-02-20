@@ -158,6 +158,7 @@ EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", m
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None, elements=None) -> str  # tool_name is fixed to "Reasoning"
+EasierlitApp.send_to_discord(thread_id, content) -> bool
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None, elements=None)
 EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None, elements=None)
 EasierlitApp.update_thought(thread_id, message_id, content, metadata=None, elements=None)  # tool_name is fixed to "Reasoning"
@@ -225,6 +226,8 @@ Discord bot setup:
 - Keep `discord=None` to disable Discord integration.
 - Pass `discord=EasierlitDiscordConfig(...)` to enable it.
 - Token precedence: `EasierlitDiscordConfig.bot_token` first, `DISCORD_BOT_TOKEN` fallback.
+- Discord replies are explicit: call `app.send_to_discord(...)` when needed.
+- Discord-origin threads are upserted with runtime auth owner for stable Thread History visibility.
 - Easierlit runs Discord through its own bridge (no runtime monkeypatching of Chainlit Discord handlers).
 - During `serve()`, Easierlit does not clear `DISCORD_BOT_TOKEN`; the env value remains unchanged.
 - If enabled and no non-empty token is available, `serve()` raises `ValueError`.
@@ -236,6 +239,7 @@ Message APIs:
 - `app.add_message(...)`
 - `app.add_tool(...)`
 - `app.add_thought(...)`
+- `app.send_to_discord(...)`
 - `app.update_message(...)`
 - `app.update_tool(...)`
 - `app.update_thought(...)`
@@ -263,6 +267,8 @@ Behavior highlights:
 - `app.enqueue(...)` mirrors input as `user_message` (UI/data layer) and dispatches to `on_message`.
 - `app.add_tool(...)` stores tool-call steps with tool name shown as step author/name.
 - `app.add_thought(...)` is the same tool-call path with fixed tool name `Reasoning`.
+- `app.add_message(...)`/`app.add_tool(...)`/`app.add_thought(...)` no longer auto-send to Discord.
+- `app.send_to_discord(...)` sends only to Discord and returns `True/False`.
 - `app.start_thread_task(...)` marks one thread as working (UI task indicator).
 - `app.end_thread_task(...)` clears working state (UI task indicator).
 - `app.is_thread_task_running(...)` returns current thread working state.
@@ -312,6 +318,7 @@ Easierlit mapping:
 - `app.add_message(...)` -> `assistant_message`
 - `app.add_tool(...)` / `app.update_tool(...)` -> `tool`
 - `app.add_thought(...)` / `app.update_thought(...)` -> `tool` (name fixed to `Reasoning`)
+- `app.send_to_discord(...)` sends an explicit Discord reply without creating a step.
 - `app.delete_message(...)` deletes by `message_id` regardless of message/tool/thought source.
 
 ## Example Map

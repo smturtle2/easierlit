@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from easierlit import AppClosedError, EasierlitApp
@@ -9,6 +11,19 @@ class _CapturingRuntime:
 
     def dispatch_incoming(self, message):
         self.incoming.append(message)
+
+
+class _DiscordRuntime:
+    def __init__(self, *, result: bool):
+        self.calls: list[tuple[str, str]] = []
+        self.result = result
+
+    async def send_to_discord(self, *, thread_id: str, content: str) -> bool:
+        self.calls.append((thread_id, content))
+        return self.result
+
+    def run_coroutine_sync(self, coro):
+        return asyncio.run(coro)
 
 
 
@@ -207,6 +222,36 @@ def test_enqueue_raises_app_closed_error_when_app_is_closed():
 
     with pytest.raises(AppClosedError):
         app.enqueue(thread_id="thread-1", content="x")
+
+
+def test_send_to_discord_returns_runtime_result():
+    runtime = _DiscordRuntime(result=True)
+    app = EasierlitApp(runtime=runtime)
+
+    sent = app.send_to_discord("thread-1", "hello")
+
+    assert sent is True
+    assert runtime.calls == [("thread-1", "hello")]
+
+
+def test_send_to_discord_returns_false_when_runtime_send_fails():
+    runtime = _DiscordRuntime(result=False)
+    app = EasierlitApp(runtime=runtime)
+
+    sent = app.send_to_discord("thread-1", "hello")
+
+    assert sent is False
+    assert runtime.calls == [("thread-1", "hello")]
+
+
+def test_send_to_discord_rejects_blank_fields():
+    runtime = _DiscordRuntime(result=True)
+    app = EasierlitApp(runtime=runtime)
+
+    with pytest.raises(ValueError, match="thread_id"):
+        app.send_to_discord(" ", "hello")
+    with pytest.raises(ValueError, match="content"):
+        app.send_to_discord("thread-1", " ")
 
 
 

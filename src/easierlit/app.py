@@ -155,6 +155,19 @@ class EasierlitApp:
             elements=elements,
         )
 
+    def send_to_discord(self, thread_id: str, content: str) -> bool:
+        resolved_thread_id = self._require_non_empty_thread_id(thread_id)
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("content must be a non-empty string.")
+        return bool(
+            self._runtime.run_coroutine_sync(
+                self._runtime.send_to_discord(
+                    thread_id=resolved_thread_id,
+                    content=content,
+                )
+            )
+        )
+
     def add_tool(
         self,
         thread_id: str,

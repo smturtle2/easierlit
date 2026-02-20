@@ -210,35 +210,7 @@ def test_dispatcher_does_not_globally_block_other_thread_ids():
     asyncio.run(scenario())
 
 
-def test_apply_outgoing_command_sends_to_discord_channel():
-    runtime = RuntimeRegistry()
-    app = EasierlitApp(runtime=runtime)
-    client = EasierlitClient(on_message=lambda _app, _incoming: None, run_funcs=[lambda _app: None])
-    runtime.bind(client=client, app=app)
-    runtime.register_discord_channel(thread_id="thread-1", channel_id=123)
-
-    sent_messages: list[str] = []
-
-    async def fake_sender(channel_id: int, command: OutgoingCommand) -> bool:
-        assert channel_id == 123
-        sent_messages.append(command.content or "")
-        return True
-
-    runtime.set_discord_sender(fake_sender)
-
-    command = OutgoingCommand(
-        command="add_message",
-        thread_id="thread-1",
-        message_id="msg-1",
-        content="hello discord",
-        author="Assistant",
-    )
-    asyncio.run(runtime.apply_outgoing_command(command))
-
-    assert sent_messages == ["hello discord"]
-
-
-def test_apply_outgoing_command_discord_also_persists_when_data_layer_exists():
+def test_apply_outgoing_command_persists_without_auto_sending_to_discord():
     class _FakeDataLayer:
         def __init__(self):
             self.created_steps = []
@@ -275,16 +247,50 @@ def test_apply_outgoing_command_discord_also_persists_when_data_layer_exists():
         command="add_message",
         thread_id="thread-1",
         message_id="msg-1",
-        content="hello both",
+        content="hello persisted only",
         author="Assistant",
     )
     asyncio.run(runtime.apply_outgoing_command(command))
 
-    assert sent_messages == ["hello both"]
+    assert sent_messages == []
     assert len(fake_data_layer.created_steps) == 1
     assert fake_data_layer.created_steps[0]["id"] == "msg-1"
     assert fake_data_layer.created_steps[0]["threadId"] == "thread-1"
     assert fake_data_layer.created_steps[0]["type"] == "assistant_message"
+
+
+def test_send_to_discord_sends_when_channel_is_registered():
+    runtime = RuntimeRegistry()
+    runtime.register_discord_channel(thread_id="thread-1", channel_id=123)
+
+    sent_messages: list[str] = []
+
+    async def fake_sender(channel_id: int, command: OutgoingCommand) -> bool:
+        assert channel_id == 123
+        sent_messages.append(command.content or "")
+        return True
+
+    runtime.set_discord_sender(fake_sender)
+    result = asyncio.run(runtime.send_to_discord(thread_id="thread-1", content="hello discord"))
+
+    assert result is True
+    assert sent_messages == ["hello discord"]
+
+
+def test_send_to_discord_returns_false_when_channel_missing():
+    runtime = RuntimeRegistry()
+
+    sent_messages: list[str] = []
+
+    async def fake_sender(channel_id: int, command: OutgoingCommand) -> bool:
+        sent_messages.append(command.content or "")
+        return True
+
+    runtime.set_discord_sender(fake_sender)
+    result = asyncio.run(runtime.send_to_discord(thread_id="thread-missing", content="hello"))
+
+    assert result is False
+    assert sent_messages == []
 
 
 def test_apply_outgoing_command_respects_explicit_step_type():

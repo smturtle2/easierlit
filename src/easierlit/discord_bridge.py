@@ -219,6 +219,15 @@ class EasierlitDiscordBridge:
         ctx = self._init_discord_context(session=session, channel=channel, message=message)
 
         try:
+            await self._rebind_discord_thread_owner_to_runtime_auth(
+                thread_id=thread_id,
+                message=message,
+                thread_name=thread_name,
+                session_metadata=ctx.session.to_persistable(),
+                bind_thread_to_user=bind_thread_to_user,
+                discord_user=user,
+            )
+
             file_elements = await download_discord_files(session, discord_files)
 
             if on_chat_start := config.code.on_chat_start:
@@ -242,27 +251,6 @@ class EasierlitDiscordBridge:
 
             if on_chat_end := config.code.on_chat_end:
                 await on_chat_end()
-
-            data_layer = self._data_layer_getter()
-            if data_layer:
-                user_id = None
-                if bind_thread_to_user and isinstance(user, PersistedUser):
-                    user_id = user.id
-
-                try:
-                    await data_layer.update_thread(
-                        thread_id=thread_id,
-                        name=thread_name,
-                        metadata=ctx.session.to_persistable(),
-                        user_id=user_id,
-                    )
-                except Exception:
-                    LOGGER.exception("Failed to update Discord thread '%s'.", thread_id)
-
-            await self._rebind_discord_thread_owner_to_runtime_auth(
-                thread_id=thread_id,
-                message=message,
-            )
         finally:
             await ctx.session.delete()
 
@@ -351,14 +339,21 @@ class EasierlitDiscordBridge:
         *,
         thread_id: str,
         message: discord.Message,
+        thread_name: str | None = None,
+        session_metadata: dict[str, Any] | None = None,
+        bind_thread_to_user: bool = False,
+        discord_user: User | PersistedUser | None = None,
     ) -> None:
         data_layer = self._data_layer_getter()
         if data_layer is None:
             return
 
-        owner_user_id = await self._resolve_runtime_auth_owner_user_id(data_layer)
-        if owner_user_id is None:
-            return
+        runtime_owner_user_id = await self._resolve_runtime_auth_owner_user_id(data_layer)
+        owner_user_id = self._resolve_discord_thread_owner_user_id(
+            runtime_owner_user_id=runtime_owner_user_id,
+            bind_thread_to_user=bind_thread_to_user,
+            discord_user=discord_user,
+        )
 
         metadata: dict[str, object] = {}
         try:
@@ -376,23 +371,47 @@ class EasierlitDiscordBridge:
                         pass
         except Exception:
             LOGGER.warning(
-                "Failed to read existing thread metadata while rebinding Discord thread '%s'.",
+                "Failed to read existing thread metadata while upserting Discord thread '%s'.",
                 thread_id,
             )
 
+        if isinstance(session_metadata, dict):
+            metadata.update(session_metadata)
         metadata.update(self._extract_discord_owner_metadata(message))
 
+        update_kwargs: dict[str, object] = {
+            "thread_id": thread_id,
+            "metadata": metadata if metadata else None,
+        }
+        if owner_user_id is not None:
+            update_kwargs["user_id"] = owner_user_id
+        if isinstance(thread_name, str) and thread_name.strip():
+            update_kwargs["name"] = thread_name
+
         try:
-            await data_layer.update_thread(
-                thread_id=thread_id,
-                user_id=owner_user_id,
-                metadata=metadata if metadata else None,
-            )
+            await data_layer.update_thread(**update_kwargs)
         except Exception:
             LOGGER.warning(
-                "Failed to rebind Discord thread '%s' owner to runtime auth user.",
+                "Failed to upsert Discord thread '%s' owner metadata.",
                 thread_id,
             )
+
+    def _resolve_discord_thread_owner_user_id(
+        self,
+        *,
+        runtime_owner_user_id: str | None,
+        bind_thread_to_user: bool,
+        discord_user: User | PersistedUser | None,
+    ) -> str | None:
+        if runtime_owner_user_id is not None:
+            return runtime_owner_user_id
+
+        if bind_thread_to_user and isinstance(discord_user, PersistedUser):
+            resolved_id = getattr(discord_user, "id", None)
+            if resolved_id is not None:
+                return str(resolved_id)
+
+        return None
 
     def _extract_discord_owner_metadata(self, message: discord.Message) -> dict[str, str]:
         metadata: dict[str, str] = {}

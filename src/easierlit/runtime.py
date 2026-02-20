@@ -212,6 +212,29 @@ class RuntimeRegistry:
         with self._lock:
             return self._thread_to_discord_channel.get(thread_id)
 
+    async def send_to_discord(self, *, thread_id: str, content: str) -> bool:
+        if not isinstance(thread_id, str):
+            return False
+        normalized_thread_id = thread_id.strip()
+        if not normalized_thread_id:
+            return False
+        if not isinstance(content, str):
+            return False
+        if not content.strip():
+            return False
+
+        discord_channel_id = self.get_discord_channel_for_thread(normalized_thread_id)
+        if discord_channel_id is None:
+            return False
+
+        command = OutgoingCommand(
+            command="add_message",
+            thread_id=normalized_thread_id,
+            content=content,
+            author="Assistant",
+        )
+        return await self._apply_discord_command(discord_channel_id, command)
+
     def dispatch_incoming(self, message: IncomingMessage) -> None:
         app = self._app
         client = self._client
@@ -395,23 +418,17 @@ class RuntimeRegistry:
             await self._apply_realtime_command(session, command)
             session_handled = True
 
-        discord_handled = False
-        discord_channel_id = self.get_discord_channel_for_thread(thread_id)
-        if discord_channel_id is not None:
-            discord_handled = await self._apply_discord_command(discord_channel_id, command)
-
         data_layer = self._data_layer_getter()
         if data_layer:
             await self._apply_data_layer_command(command)
             return
 
-        if session_handled or discord_handled:
+        if session_handled:
             return
 
-        if not session_handled and not discord_handled:
-            raise ThreadSessionNotActiveError(
-                f"Thread '{thread_id}' has no active session and no data layer fallback."
-            )
+        raise ThreadSessionNotActiveError(
+            f"Thread '{thread_id}' has no active session and no data layer fallback."
+        )
 
     async def _prepare_command_elements(
         self,

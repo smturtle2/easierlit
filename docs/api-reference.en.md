@@ -199,6 +199,7 @@ Behavior:
 - Enqueues outgoing `add_message` command.
 - `elements` forwards Chainlit element objects (image/file/etc.) to runtime.
 - Returns generated `message_id`.
+- This call does not auto-send to Discord.
 - Command is later applied by runtime dispatcher.
 - Runtime dispatcher preserves outgoing order within the same `thread_id`; global cross-thread outgoing order is not guaranteed.
 
@@ -230,6 +231,20 @@ add_thought(
 ```
 
 - Wrapper of `add_tool(...)` with fixed tool name `"Reasoning"`.
+
+### 4.6.1 `EasierlitApp.send_to_discord`
+
+```python
+send_to_discord(
+    thread_id: str,
+    content: str,
+) -> bool
+```
+
+- Sends content to Discord only for the currently mapped Discord channel of `thread_id`.
+- Returns `True` when sent, `False` when channel is not registered or send fails.
+- Raises `ValueError` when `thread_id` or `content` is blank.
+- Does not create/update Chainlit steps or data-layer records.
 
 ### 4.7 `EasierlitApp.update_message`
 
@@ -561,6 +576,7 @@ OutgoingCommand(
 - Outgoing `app.add_message` maps to assistant-message flow.
 - Outgoing `app.add_tool/update_tool` maps to tool-call flow with step name set from `tool_name`.
 - Outgoing `app.add_thought/update_thought` maps to tool-call flow with fixed step name `Reasoning`.
+- `app.send_to_discord` maps to explicit Discord-only output (no step persistence).
 
 ## 8. Method-to-Example Index
 
@@ -572,5 +588,6 @@ OutgoingCommand(
 | `EasierlitApp.enqueue` | In-process integrations that mirror input as `user_message` and dispatch to `on_message` |
 | `EasierlitApp.add_message`, `update_message`, `delete_message` | `examples/minimal.py`, `examples/thread_create_in_run_func.py` |
 | `EasierlitApp.add_tool`, `add_thought`, `update_tool`, `update_thought` | `examples/step_types.py` |
+| `EasierlitApp.send_to_discord` | `examples/discord_bot.py` |
 | Auth + persistence configs | `examples/custom_auth.py` |
 | Discord config | `examples/discord_bot.py` |

@@ -158,6 +158,7 @@ EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", m
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None, elements=None) -> str  # tool_name은 "Reasoning" 고정
+EasierlitApp.send_to_discord(thread_id, content) -> bool
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None, elements=None)
 EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None, elements=None)
 EasierlitApp.update_thought(thread_id, message_id, content, metadata=None, elements=None)  # tool_name은 "Reasoning" 고정
@@ -225,6 +226,8 @@ Discord 봇 구성:
 - `discord=None`이면 Discord 연동 비활성
 - `discord=EasierlitDiscordConfig(...)`를 전달하면 기본 활성
 - 토큰 우선순위: `EasierlitDiscordConfig.bot_token` 우선, `DISCORD_BOT_TOKEN` 폴백
+- Discord 응답은 명시적으로 `app.send_to_discord(...)`를 호출해 전송
+- Discord 유입 thread는 Thread History 노출 안정성을 위해 runtime auth 사용자로 우선 귀속
 - Easierlit은 자체 Discord bridge로 동작하며 Chainlit Discord handler를 런타임에 monkeypatch하지 않음
 - `serve()` 중에도 Easierlit은 `DISCORD_BOT_TOKEN`을 비우지 않으며, env 값은 그대로 유지됨
 - 활성화 상태에서 비어 있지 않은 토큰을 찾지 못하면 `serve()`가 `ValueError`를 발생
@@ -236,6 +239,7 @@ Message API:
 - `app.add_message(...)`
 - `app.add_tool(...)`
 - `app.add_thought(...)`
+- `app.send_to_discord(...)`
 - `app.update_message(...)`
 - `app.update_tool(...)`
 - `app.update_thought(...)`
@@ -263,6 +267,8 @@ Thread 작업 상태 API:
 - `app.enqueue(...)`는 입력을 `user_message`로 UI/data layer에 반영하고 `on_message`로 디스패치
 - `app.add_tool(...)`은 도구 호출 step을 생성하며 도구명은 step author/name으로 표시됩니다.
 - `app.add_thought(...)`는 동일한 도구 호출 경로를 사용하고 도구명은 `Reasoning`으로 고정됩니다.
+- `app.add_message(...)`/`app.add_tool(...)`/`app.add_thought(...)`는 Discord로 자동 전송되지 않습니다.
+- `app.send_to_discord(...)`는 Discord에만 전송하고 `True/False`를 반환합니다.
 - `app.start_thread_task(...)`는 특정 thread를 작업 중(UI indicator) 상태로 표시합니다.
 - `app.end_thread_task(...)`는 해당 thread의 작업 중(UI indicator) 상태를 해제합니다.
 - `app.is_thread_task_running(...)`는 thread 작업 중 상태를 반환합니다.
@@ -312,6 +318,7 @@ Easierlit 매핑:
 - `app.add_message(...)` -> `assistant_message`
 - `app.add_tool(...)` / `app.update_tool(...)` -> `tool`
 - `app.add_thought(...)` / `app.update_thought(...)` -> `tool` (`Reasoning` 고정)
+- `app.send_to_discord(...)`는 step 저장 없이 Discord 응답만 전송
 - `app.delete_message(...)`는 `message_id` 기준으로 message/tool/thought를 공통 삭제
 
 ## 예제 맵

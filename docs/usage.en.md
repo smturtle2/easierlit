@@ -86,6 +86,7 @@ EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", m
 EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
 EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
 EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name is fixed to "Reasoning"
+EasierlitApp.send_to_discord(thread_id, content) -> bool
 EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
 EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None)
 EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # tool_name is fixed to "Reasoning"
@@ -197,6 +198,8 @@ Discord token resolution policy:
 - `EasierlitDiscordConfig.bot_token` is used first when non-empty.
 - If it is missing, `DISCORD_BOT_TOKEN` is used as fallback.
 - If Discord is enabled and no non-empty token is available, `serve()` raises `ValueError`.
+- Discord replies are explicit via `app.send_to_discord(...)`.
+- Discord-origin threads are upserted with runtime auth owner to keep Thread History visibility stable.
 - Easierlit runs Discord via its own bridge (no runtime monkeypatching of Chainlit Discord handlers).
 - During `serve()`, Easierlit does not clear `DISCORD_BOT_TOKEN`; the env value remains unchanged.
 
@@ -271,6 +274,7 @@ Message methods:
 
 - `app.add_message(...)`, `app.update_message(...)`, `app.delete_message(...)`
 - `app.add_tool(...)`, `app.add_thought(...)`, `app.update_tool(...)`, `app.update_thought(...)`
+- `app.send_to_discord(...)` for explicit Discord-only replies
 
 Execution model:
 
@@ -279,6 +283,8 @@ Execution model:
 3. Fallback initializes internal HTTP Chainlit context before step CRUD.
 4. If no session and no data layer, `ThreadSessionNotActiveError` is raised when queued command is applied.
 5. Outgoing commands are processed by `thread_id` lane. Same-thread order is preserved; different threads may complete out of global order.
+6. `app.add_message(...)`/`app.add_tool(...)`/`app.add_thought(...)` do not auto-send to Discord.
+7. Use `app.send_to_discord(...)` when a Discord reply is required.
 
 ## 10. Creating Threads from run_func
 
@@ -313,6 +319,7 @@ Easierlit mapping:
 - Outgoing `app.add_message()` is assistant-message flow.
 - Outgoing `app.add_tool()/app.update_tool()` is tool-call flow with step name=`tool_name`.
 - Outgoing `app.add_thought()/app.update_thought()` is tool-call flow with fixed step name=`Reasoning`.
+- `app.send_to_discord()` sends explicit Discord output without creating a step.
 
 UI option reference (Chainlit): `ui.cot` supports `full`, `tool_call`, `hidden`.
 
