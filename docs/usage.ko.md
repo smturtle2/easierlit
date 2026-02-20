@@ -200,6 +200,9 @@ Discord 토큰 해석 정책:
 - Discord 활성화 상태에서 유효 토큰이 없으면 `serve()`가 `ValueError` 발생
 - Discord 응답은 `app.send_to_discord(...)`로 명시적으로 전송
 - Discord 유입 thread는 Thread History 노출 안정성을 위해 runtime auth 사용자로 우선 귀속
+- Discord 유입 매핑은 채널 기준 고정: `thread_id = uuid5(NAMESPACE_DNS, "discord-channel:<channel_id>")`
+- Easierlit은 Discord의 모든 채널 타입 유입 메시지를 처리합니다(봇 메시지 제외)
+- Discord 유입 첨부파일은 element로 정규화되어 기존 storage/data layer 경로로 저장됩니다
 - Easierlit은 자체 Discord bridge로 동작하며 Chainlit Discord handler를 런타임에 monkeypatch하지 않음
 - `serve()` 동안 Easierlit은 `DISCORD_BOT_TOKEN`을 비우지 않으며 env 값은 그대로 유지
 

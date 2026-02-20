@@ -200,6 +200,9 @@ Discord token resolution policy:
 - If Discord is enabled and no non-empty token is available, `serve()` raises `ValueError`.
 - Discord replies are explicit via `app.send_to_discord(...)`.
 - Discord-origin threads are upserted with runtime auth owner to keep Thread History visibility stable.
+- Discord inbound mapping is channel-scoped: `thread_id = uuid5(NAMESPACE_DNS, "discord-channel:<channel_id>")`.
+- Easierlit processes inbound messages from all Discord channel types (non-bot messages only).
+- Discord inbound attachments are normalized into elements and persisted via the existing storage/data-layer path.
 - Easierlit runs Discord via its own bridge (no runtime monkeypatching of Chainlit Discord handlers).
 - During `serve()`, Easierlit does not clear `DISCORD_BOT_TOKEN`; the env value remains unchanged.
 
