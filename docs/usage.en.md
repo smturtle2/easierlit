@@ -82,19 +82,19 @@ EasierlitClient(
 EasierlitApp.discord_typing_open(thread_id) -> bool
 EasierlitApp.discord_typing_close(thread_id) -> bool
 EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
-EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
-EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
-EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name is fixed to "Reasoning"
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
+EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
+EasierlitApp.add_thought(thread_id, content, metadata=None, elements=None) -> str  # tool_name is fixed to "Reasoning"
 EasierlitApp.send_to_discord(thread_id, content, elements=None) -> bool
 EasierlitApp.is_discord_thread(thread_id) -> bool
-EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
-EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None)
-EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # tool_name is fixed to "Reasoning"
+EasierlitApp.update_message(thread_id, message_id, content, metadata=None, elements=None)
+EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None, elements=None)
+EasierlitApp.update_thought(thread_id, message_id, content, metadata=None, elements=None)  # tool_name is fixed to "Reasoning"
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
 EasierlitApp.get_messages(thread_id) -> dict
-EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
+EasierlitApp.new_thread(name=None, metadata=None, tags=None, thread_id=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
 EasierlitApp.reset_thread(thread_id)
@@ -104,7 +104,7 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=<auto LocalFileStorageClient>,
+    local_storage_dir=None,
 )
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
@@ -165,12 +165,12 @@ server = EasierlitServer(client=client, auth=auth)
 Persistence setup example:
 
 ```python
-from easierlit import EasierlitPersistenceConfig, EasierlitServer, LocalFileStorageClient
+from easierlit import EasierlitPersistenceConfig, EasierlitServer
 
 persistence = EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=LocalFileStorageClient(...),  # Optional override. Must be a LocalFileStorageClient.
+    local_storage_dir="~/.easierlit/custom_storage",  # Optional local storage path override.
 )
 
 server = EasierlitServer(client=client, persistence=persistence)
@@ -252,7 +252,7 @@ Available methods on `EasierlitApp`:
 - `list_threads(first=20, cursor=None, search=None, user_identifier=None)`
 - `get_thread(thread_id)`
 - `get_messages(thread_id) -> dict`
-- `new_thread(name=None, metadata=None, tags=None) -> str`
+- `new_thread(name=None, metadata=None, tags=None, thread_id=None) -> str`
 - `update_thread(thread_id, name=None, metadata=None, tags=None)`
 - `delete_thread(thread_id)`
 - `reset_thread(thread_id)`
@@ -261,6 +261,7 @@ Behavior details:
 
 - Data layer is required for thread CRUD.
 - `new_thread` auto-generates a unique thread id and returns it.
+- `new_thread(thread_id=...)` creates a thread with the explicit id when you need deterministic ids.
 - `update_thread` updates only when target thread already exists.
 - `reset_thread` deletes all thread messages and recreates the same thread id while restoring only thread `name`.
 - `get_messages` returns thread metadata and one ordered `messages` list.

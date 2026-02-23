@@ -179,6 +179,13 @@ def _execute_on_message(
 
 
 class EasierlitClient:
+    """Incoming message worker manager for Easierlit runtime.
+
+    `EasierlitClient` runs user handlers (`on_message`, optional `run_funcs`) and
+    coordinates message scheduling with per-thread ordering and bounded
+    concurrency.
+    """
+
     def __init__(
         self,
         on_message: Callable[[EasierlitApp, IncomingMessage], Any],
@@ -187,6 +194,45 @@ class EasierlitClient:
         run_func_mode: RunFuncMode = "auto",
         max_message_workers: int = 64,
     ):
+        """Configure worker behavior for incoming messages and background loops.
+
+        Args:
+            on_message: Required message handler called as
+                `on_message(app, incoming)`. Sync and async are both supported.
+            run_funcs: Optional background worker functions called as
+                `run_func(app)`.
+            worker_mode: Worker backend mode. Currently only `"thread"` is
+                supported.
+            run_func_mode: Execution mode for `run_funcs`.
+                - `"auto"`: auto-detect awaitable return.
+                - `"sync"`: require non-awaitable return.
+                - `"async"`: require awaitable return.
+            max_message_workers: Max concurrent `on_message` workers across all
+                active thread ids.
+
+        Raises:
+            TypeError: If `on_message` is not callable.
+            TypeError: If any entry in `run_funcs` is not callable.
+            ValueError: If `worker_mode` or `run_func_mode` is invalid.
+            ValueError: If `run_funcs` is not a list when provided.
+            ValueError: If `max_message_workers < 1`.
+
+        Examples:
+            ```python
+            from easierlit import EasierlitClient
+
+
+            def on_message(app, incoming):
+                app.add_message(incoming.thread_id, f"Echo: {incoming.content}")
+
+
+            client = EasierlitClient(
+                on_message=on_message,
+                run_func_mode="auto",
+                max_message_workers=64,
+            )
+            ```
+        """
         if not callable(on_message):
             raise TypeError("on_message must be callable.")
         if worker_mode != "thread":
@@ -231,6 +277,18 @@ class EasierlitClient:
         ]
 
     def run(self, app: EasierlitApp) -> None:
+        """Start client workers and enable incoming message dispatch.
+
+        The scheduler guarantees per-`thread_id` ordering while processing
+        different `thread_id` values in parallel up to `max_message_workers`.
+        Uncaught worker exceptions are handled with fail-fast behavior.
+
+        Args:
+            app: Shared `EasierlitApp` instance used by all handlers.
+
+        Raises:
+            WorkerAlreadyRunningError: If run is called while workers are alive.
+        """
         if self._is_worker_running():
             raise WorkerAlreadyRunningError("run() called while worker is already running.")
 
@@ -248,6 +306,19 @@ class EasierlitClient:
         self._start_thread_workers(app)
 
     def stop(self, timeout: float = 5.0) -> None:
+        """Stop scheduling new incoming messages and shutdown workers.
+
+        This method closes the app, clears pending incoming buffers, joins
+        background `run_funcs` threads, and shuts down awaitable runners. It
+        does not wait for every in-flight message worker to complete.
+
+        Args:
+            timeout: Join timeout (seconds) applied per worker thread.
+
+        Raises:
+            RunFuncExecutionError: If a worker crashed and an error traceback
+                was recorded.
+        """
         with self._message_scheduler_lock:
             self._accept_incoming_messages = False
             self._pending_messages_by_thread.clear()
@@ -474,10 +545,16 @@ class EasierlitClient:
             raise RunFuncExecutionError(self._thread_error_queue.get())
 
     def set_worker_crash_handler(self, handler: Callable[[str], None] | None) -> None:
+        """Register or clear a callback for fatal worker tracebacks.
+
+        Args:
+            handler: Callback receiving traceback text, or `None` to clear.
+        """
         with self._worker_error_lock:
             self._worker_crash_handler = handler
 
     def peek_worker_error(self) -> str | None:
+        """Return the first recorded worker traceback, if any."""
         with self._worker_error_lock:
             return self._worker_error_traceback
 

@@ -76,6 +76,16 @@ async def assert_local_storage_operational(
 
 @dataclass(slots=True)
 class EasierlitAuthConfig:
+    """Authentication bootstrap settings used by `EasierlitServer`.
+
+    Args:
+        username: Login username shown in Chainlit auth flow.
+        password: Login password for the same user.
+        identifier: Optional persisted user identifier. If omitted, username is
+            used as fallback in runtime owner resolution.
+        metadata: Optional user metadata persisted with the auth user.
+    """
+
     username: str
     password: str
     identifier: str | None = None
@@ -90,6 +100,19 @@ class EasierlitAuthConfig:
 
 @dataclass(slots=True)
 class EasierlitPersistenceConfig:
+    """Persistence settings for SQLite thread data and local file storage.
+
+    Args:
+        enabled: Enable/disable Easierlit persistence bootstrap.
+        sqlite_path: SQLite database file path used by runtime bootstrap.
+        local_storage_dir: Optional local file root override for
+            `LocalFileStorageClient`.
+
+    Notes:
+        When `enabled=True`, a `LocalFileStorageClient` is created
+        automatically and validated by runtime startup preflight.
+    """
+
     enabled: bool = True
     sqlite_path: str = ".chainlit/easierlit.db"
     local_storage_dir: str | Path | None = None
@@ -120,6 +143,14 @@ def _resolve_local_storage_provider(persistence: EasierlitPersistenceConfig) -> 
 
 @dataclass(slots=True)
 class EasierlitDiscordConfig:
+    """Discord integration settings.
+
+    Args:
+        enabled: Enable/disable Easierlit Discord bridge.
+        bot_token: Optional explicit bot token. When omitted, runtime falls back
+            to `DISCORD_BOT_TOKEN` environment variable.
+    """
+
     enabled: bool = True
     bot_token: str | None = None
 

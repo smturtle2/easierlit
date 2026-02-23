@@ -82,19 +82,19 @@ EasierlitClient(
 EasierlitApp.discord_typing_open(thread_id) -> bool
 EasierlitApp.discord_typing_close(thread_id) -> bool
 EasierlitApp.enqueue(thread_id, content, session_id="external", author="User", message_id=None, metadata=None, elements=None, created_at=None) -> str
-EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None) -> str
-EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None) -> str
-EasierlitApp.add_thought(thread_id, content, metadata=None) -> str  # tool_name은 "Reasoning" 고정
+EasierlitApp.add_message(thread_id, content, author="Assistant", metadata=None, elements=None) -> str
+EasierlitApp.add_tool(thread_id, tool_name, content, metadata=None, elements=None) -> str
+EasierlitApp.add_thought(thread_id, content, metadata=None, elements=None) -> str  # tool_name은 "Reasoning" 고정
 EasierlitApp.send_to_discord(thread_id, content, elements=None) -> bool
 EasierlitApp.is_discord_thread(thread_id) -> bool
-EasierlitApp.update_message(thread_id, message_id, content, metadata=None)
-EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None)
-EasierlitApp.update_thought(thread_id, message_id, content, metadata=None)  # tool_name은 "Reasoning" 고정
+EasierlitApp.update_message(thread_id, message_id, content, metadata=None, elements=None)
+EasierlitApp.update_tool(thread_id, message_id, tool_name, content, metadata=None, elements=None)
+EasierlitApp.update_thought(thread_id, message_id, content, metadata=None, elements=None)  # tool_name은 "Reasoning" 고정
 EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
 EasierlitApp.get_messages(thread_id) -> dict
-EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
+EasierlitApp.new_thread(name=None, metadata=None, tags=None, thread_id=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
 EasierlitApp.reset_thread(thread_id)
@@ -104,7 +104,7 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=<auto LocalFileStorageClient>,
+    local_storage_dir=None,
 )
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
@@ -165,12 +165,12 @@ server = EasierlitServer(client=client, auth=auth)
 영속성 설정 예시:
 
 ```python
-from easierlit import EasierlitPersistenceConfig, EasierlitServer, LocalFileStorageClient
+from easierlit import EasierlitPersistenceConfig, EasierlitServer
 
 persistence = EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=LocalFileStorageClient(...),  # 선택 override. LocalFileStorageClient만 허용됩니다.
+    local_storage_dir="~/.easierlit/custom_storage",  # 선택 로컬 저장 경로 override.
 )
 
 server = EasierlitServer(client=client, persistence=persistence)
@@ -252,7 +252,7 @@ Discord typing API:
 - `list_threads(first=20, cursor=None, search=None, user_identifier=None)`
 - `get_thread(thread_id)`
 - `get_messages(thread_id) -> dict`
-- `new_thread(name=None, metadata=None, tags=None) -> str`
+- `new_thread(name=None, metadata=None, tags=None, thread_id=None) -> str`
 - `update_thread(thread_id, name=None, metadata=None, tags=None)`
 - `delete_thread(thread_id)`
 - `reset_thread(thread_id)`
@@ -261,6 +261,7 @@ Discord typing API:
 
 - Thread CRUD는 data layer가 필요합니다.
 - `new_thread`는 고유한 thread id를 자동 생성하고 반환합니다.
+- `new_thread(thread_id=...)`를 쓰면 명시한 id로 thread를 생성할 수 있습니다.
 - `update_thread`는 대상 thread가 이미 있을 때만 수정합니다.
 - `reset_thread`는 thread 메시지를 전부 삭제하고 동일한 thread id로 재생성하며 `name`만 복원합니다.
 - `get_messages`는 thread 메타데이터와 순서 보존 `messages` 단일 목록을 반환합니다.

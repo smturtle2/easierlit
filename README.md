@@ -166,7 +166,7 @@ EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
 EasierlitApp.get_messages(thread_id) -> dict
-EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
+EasierlitApp.new_thread(name=None, metadata=None, tags=None, thread_id=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
 EasierlitApp.reset_thread(thread_id)
@@ -176,7 +176,7 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=<auto LocalFileStorageClient>,
+    local_storage_dir=None,
 )
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
@@ -218,7 +218,7 @@ Typical Easierlit setup:
 
 - keep `auth=None` and `persistence=None` for default enabled auth + persistence
 - optionally set `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` for non-default credentials
-- pass `persistence=EasierlitPersistenceConfig(storage_provider=LocalFileStorageClient(...))` to override local storage path/behavior
+- pass `persistence=EasierlitPersistenceConfig(local_storage_dir="uploads")` to override local storage path
 - or pass explicit `auth=EasierlitAuthConfig(...)`
 
 Discord bot setup:

@@ -166,7 +166,7 @@ EasierlitApp.delete_message(thread_id, message_id)
 EasierlitApp.list_threads(first=20, cursor=None, search=None, user_identifier=None)
 EasierlitApp.get_thread(thread_id)
 EasierlitApp.get_messages(thread_id) -> dict
-EasierlitApp.new_thread(name=None, metadata=None, tags=None) -> str
+EasierlitApp.new_thread(name=None, metadata=None, tags=None, thread_id=None) -> str
 EasierlitApp.update_thread(thread_id, name=None, metadata=None, tags=None)
 EasierlitApp.delete_thread(thread_id)
 EasierlitApp.reset_thread(thread_id)
@@ -176,7 +176,7 @@ EasierlitAuthConfig(username, password, identifier=None, metadata=None)
 EasierlitPersistenceConfig(
     enabled=True,
     sqlite_path=".chainlit/easierlit.db",
-    storage_provider=<auto LocalFileStorageClient>,
+    local_storage_dir=None,
 )
 EasierlitDiscordConfig(enabled=True, bot_token=None)
 ```
@@ -218,7 +218,7 @@ Easierlit에서 일반적인 구성:
 
 - `auth=None`, `persistence=None`으로 기본 인증/영속성 활성 사용
 - 기본 계정을 쓰지 않으려면 `EASIERLIT_AUTH_USERNAME`/`EASIERLIT_AUTH_PASSWORD` 설정
-- 로컬 저장소 경로/동작을 바꾸려면 `persistence=EasierlitPersistenceConfig(storage_provider=LocalFileStorageClient(...))` 전달
+- 로컬 저장소 경로를 바꾸려면 `persistence=EasierlitPersistenceConfig(local_storage_dir="uploads")` 전달
 - 또는 `auth=EasierlitAuthConfig(...)`를 명시 전달
 
 Discord 봇 구성:

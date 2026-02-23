@@ -15,6 +15,17 @@ LOCAL_STORAGE_ROUTE_PREFIX = "/easierlit/local"
 
 
 class LocalFileStorageClient(BaseStorageClient):
+    """Local filesystem-backed storage client for Chainlit elements.
+
+    Files are stored under `<CHAINLIT_APP_ROOT or cwd>/public/easierlit` by
+    default and served through `/easierlit/local/{object_key}`.
+
+    Args:
+        base_dir: Optional custom storage root. Relative paths are resolved
+            under `<CHAINLIT_APP_ROOT or cwd>/public`. Absolute paths are used
+            as-is.
+    """
+
     def __init__(self, base_dir: str | Path | None = None):
         self.public_root = self._resolve_public_root()
         self.public_root.mkdir(parents=True, exist_ok=True)
@@ -30,6 +41,23 @@ class LocalFileStorageClient(BaseStorageClient):
         overwrite: bool = True,
         content_disposition: str | None = None,
     ) -> dict[str, Any]:
+        """Store a file payload and return object key + public read URL.
+
+        Args:
+            object_key: Logical file key (POSIX-like relative path).
+            data: File payload as bytes or UTF-8 string.
+            mime: Unused compatibility field.
+            overwrite: Whether existing file should be overwritten.
+            content_disposition: Unused compatibility field.
+
+        Returns:
+            Dictionary with `object_key` and `url`.
+
+        Raises:
+            FileExistsError: If file exists and `overwrite=False`.
+            TypeError: If data is not `bytes` or `str`.
+            ValueError: If `object_key` is invalid.
+        """
         del mime, content_disposition
 
         normalized_key, file_path = self._resolve_path(object_key)
@@ -53,6 +81,18 @@ class LocalFileStorageClient(BaseStorageClient):
         }
 
     async def get_read_url(self, object_key: str) -> str:
+        """Return public read URL for an existing local object key.
+
+        Args:
+            object_key: Logical file key.
+
+        Returns:
+            Public URL path for reading the file.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            ValueError: If `object_key` is invalid.
+        """
         normalized_key, file_path = self._resolve_path(object_key)
         if not file_path.is_file():
             raise FileNotFoundError(
@@ -61,6 +101,17 @@ class LocalFileStorageClient(BaseStorageClient):
         return self._build_local_url(normalized_key)
 
     async def delete_file(self, object_key: str) -> bool:
+        """Delete one local file by object key.
+
+        Args:
+            object_key: Logical file key.
+
+        Returns:
+            `True` when a file was removed, otherwise `False`.
+
+        Raises:
+            ValueError: If `object_key` is invalid.
+        """
         _, file_path = self._resolve_path(object_key)
         if not file_path.exists():
             return False
@@ -78,6 +129,7 @@ class LocalFileStorageClient(BaseStorageClient):
         return True
 
     async def close(self) -> None:
+        """No-op close method for storage client compatibility."""
         return None
 
     def _resolve_public_root(self) -> Path:
@@ -110,6 +162,17 @@ class LocalFileStorageClient(BaseStorageClient):
         return f"{LOCAL_STORAGE_ROUTE_PREFIX}/{encoded_path}"
 
     def resolve_file_path(self, object_key: str) -> Path:
+        """Resolve an object key to an absolute local file path.
+
+        Args:
+            object_key: Logical file key.
+
+        Returns:
+            Absolute filesystem path.
+
+        Raises:
+            ValueError: If `object_key` is invalid.
+        """
         _, file_path = self._resolve_path(object_key)
         return file_path
 

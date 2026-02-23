@@ -33,7 +33,7 @@ Parameters:
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD` when both are present.
 - fallback `admin` / `admin` when both are absent (warning log emitted).
 - `persistence`: optional persistence config. If `None`, default SQLite bootstrap behavior is enabled.
-- `persistence.storage_provider`: optional local storage client override for file/image persistence. Easierlit requires `LocalFileStorageClient`.
+- `persistence.local_storage_dir`: optional local storage directory override for default `LocalFileStorageClient`.
 - `discord`: optional Discord bot config. Defaults to disabled behavior.
 
 ### 2.2 `EasierlitServer.serve`
@@ -381,6 +381,7 @@ new_thread(
     name: str | None = None,
     metadata: dict | None = None,
     tags: list[str] | None = None,
+    thread_id: str | None = None,
 ) -> str
 ```
 
@@ -389,11 +390,13 @@ Behavior:
 - Generates `thread_id` internally using UUID4.
 - Retries up to 16 times when generated id already exists.
 - Returns the created `thread_id`.
+- When `thread_id` is provided, creates using that id and fails if it already exists.
 - With auth configured, auto-resolves/creates owner user and writes `user_id`.
 - SQLite SQLAlchemyDataLayer stores `tags` as JSON string.
 
 Raises:
 
+- `ValueError` if explicit `thread_id` already exists.
 - `RuntimeError` if unique `thread_id` allocation fails after 16 attempts.
 
 ### 4.15 `EasierlitApp.update_thread`
@@ -500,19 +503,19 @@ EasierlitAuthConfig(
 EasierlitPersistenceConfig(
     enabled: bool = True,
     sqlite_path: str = ".chainlit/easierlit.db",
-    storage_provider: BaseStorageClient | Any = <auto LocalFileStorageClient>,
+    local_storage_dir: str | Path | None = None,
 )
 ```
 
-- `storage_provider` is forwarded to `SQLAlchemyDataLayer(storage_provider=...)`.
-- Default `storage_provider` is `LocalFileStorageClient`.
+- Default storage provider is `LocalFileStorageClient`.
+- `local_storage_dir` customizes `LocalFileStorageClient` base directory.
 - Default local storage path is `<CHAINLIT_APP_ROOT or cwd>/public/easierlit`.
 - `LocalFileStorageClient(base_dir=...)` supports `~` expansion.
 - Relative `base_dir` values resolve under `<CHAINLIT_APP_ROOT or cwd>/public`.
 - Absolute `base_dir` values outside `public` are supported directly.
 - Local files/images are served through `/easierlit/local/{object_key}`.
 - Generated local file/image URLs include both `CHAINLIT_PARENT_ROOT_PATH` and `CHAINLIT_ROOT_PATH`.
-- `enabled=True` requires a valid `LocalFileStorageClient`; `None` or non-local providers raise configuration errors.
+- `enabled=True` always bootstraps a `LocalFileStorageClient`.
 - Easierlit preflights local storage upload/read/delete at startup for default persistence.
 
 ### 5.3 `EasierlitDiscordConfig`
@@ -541,10 +544,10 @@ IncomingMessage(
     session_id: str,
     message_id: str,
     content: str,
-    elements: list[Any] = [],
+    elements: list[Any] = <default_factory list>,
     author: str,
     created_at: str | None = None,
-    metadata: dict | None = None,
+    metadata: dict[str, Any] = <default_factory dict>,
 )
 ```
 
@@ -563,8 +566,10 @@ OutgoingCommand(
     thread_id: str | None = None,
     message_id: str | None = None,
     content: str | None = None,
+    elements: list[Any] = <default_factory list>,
     author: str = "Assistant",
-    metadata: dict | None = None,
+    step_type: str | None = None,
+    metadata: dict[str, Any] = <default_factory dict>,
 )
 ```
 

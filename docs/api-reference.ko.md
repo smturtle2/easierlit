@@ -33,7 +33,7 @@ EasierlitServer(
 - `EASIERLIT_AUTH_USERNAME` + `EASIERLIT_AUTH_PASSWORD`가 모두 있으면 해당 값 사용
 - 둘 다 없으면 `admin` / `admin` 폴백 사용 (경고 로그 출력)
 - `persistence`: 선택 영속성 설정. `None`이면 기본 SQLite 부트스트랩 정책 활성
-- `persistence.storage_provider`: 파일/이미지 영속화를 위한 선택 로컬 storage client override. Easierlit은 `LocalFileStorageClient`를 요구합니다.
+- `persistence.local_storage_dir`: 기본 `LocalFileStorageClient`의 로컬 저장 디렉토리 override
 - `discord`: 선택 Discord 봇 설정 (기본은 비활성 정책)
 
 ### 2.2 `EasierlitServer.serve`
@@ -381,6 +381,7 @@ new_thread(
     name: str | None = None,
     metadata: dict | None = None,
     tags: list[str] | None = None,
+    thread_id: str | None = None,
 ) -> str
 ```
 
@@ -389,11 +390,13 @@ new_thread(
 - UUID4로 `thread_id`를 내부 생성
 - 생성된 id가 이미 존재하면 최대 16회 재시도
 - 생성된 `thread_id`를 반환
+- `thread_id`를 명시하면 해당 id로 생성하며, 이미 존재하면 실패
 - auth 설정 시 owner user를 자동 조회/생성해 `user_id`로 저장
 - SQLite SQLAlchemyDataLayer에서는 `tags`를 JSON 문자열로 저장
 
 예외:
 
+- 명시한 `thread_id`가 이미 존재하면 `ValueError`
 - 16회 재시도 후에도 고유 id를 확보하지 못하면 `RuntimeError`
 
 ### 4.15 `EasierlitApp.update_thread`
@@ -500,19 +503,19 @@ EasierlitAuthConfig(
 EasierlitPersistenceConfig(
     enabled: bool = True,
     sqlite_path: str = ".chainlit/easierlit.db",
-    storage_provider: BaseStorageClient | Any = <auto LocalFileStorageClient>,
+    local_storage_dir: str | Path | None = None,
 )
 ```
 
-- `storage_provider`는 `SQLAlchemyDataLayer(storage_provider=...)`로 전달됩니다.
-- 기본 `storage_provider`는 `LocalFileStorageClient`입니다.
+- 기본 storage provider는 `LocalFileStorageClient`입니다.
+- `local_storage_dir`로 `LocalFileStorageClient` 기본 저장 경로를 변경할 수 있습니다.
 - 기본 로컬 저장 경로는 `<CHAINLIT_APP_ROOT 또는 cwd>/public/easierlit`입니다.
 - `LocalFileStorageClient(base_dir=...)`는 `~` 경로 확장을 지원합니다.
 - 상대 `base_dir`는 `<CHAINLIT_APP_ROOT 또는 cwd>/public` 하위로 해석됩니다.
 - `public` 밖 절대 `base_dir`도 직접 사용할 수 있습니다.
 - 로컬 파일/이미지는 `/easierlit/local/{object_key}` 경로로 서빙됩니다.
 - 생성되는 로컬 파일/이미지 URL은 `CHAINLIT_PARENT_ROOT_PATH`와 `CHAINLIT_ROOT_PATH`를 함께 반영합니다.
-- `enabled=True`에서는 유효한 `LocalFileStorageClient`가 필수이며, `None` 또는 비-local provider는 설정 오류를 발생시킵니다.
+- `enabled=True`에서는 `LocalFileStorageClient`가 자동으로 부트스트랩됩니다.
 - 기본 persistence 경로에서는 startup에 local storage upload/read/delete preflight를 수행합니다.
 
 ### 5.3 `EasierlitDiscordConfig`
@@ -541,10 +544,10 @@ IncomingMessage(
     session_id: str,
     message_id: str,
     content: str,
-    elements: list[Any] = [],
+    elements: list[Any] = <default_factory list>,
     author: str,
     created_at: str | None = None,
-    metadata: dict | None = None,
+    metadata: dict[str, Any] = <default_factory dict>,
 )
 ```
 
@@ -563,8 +566,10 @@ OutgoingCommand(
     thread_id: str | None = None,
     message_id: str | None = None,
     content: str | None = None,
+    elements: list[Any] = <default_factory list>,
     author: str = "Assistant",
-    metadata: dict | None = None,
+    step_type: str | None = None,
+    metadata: dict[str, Any] = <default_factory dict>,
 )
 ```
 

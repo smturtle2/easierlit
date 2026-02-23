@@ -18,12 +18,11 @@ from .models import IncomingMessage, OutgoingCommand
 from .runtime import get_runtime
 
 class EasierlitApp:
-    """
-    Communication bridge between Chainlit callbacks and user handlers.
+    """Primary user-facing API for message and thread operations.
 
-    This object is the primary API surface for message and thread CRUD
-    operations. Incoming user messages are dispatched through EasierlitClient
-    on_message workers.
+    `EasierlitApp` is passed to user handlers (`on_message`, `run_funcs`) and
+    provides methods to enqueue outgoing UI commands, inspect thread data, and
+    run thread CRUD operations through the configured data layer/runtime bridge.
     """
 
     _THOUGHT_TOOL_NAME = "Reasoning"
@@ -61,6 +60,40 @@ class EasierlitApp:
         elements: list[Any] | None = None,
         created_at: str | None = None,
     ) -> str:
+        """Mirror external input as a user message and dispatch to `on_message`.
+
+        This is the recommended in-process bridge for webhook/internal events
+        that should behave like normal user messages in Chainlit UI/history.
+
+        Args:
+            thread_id: Target thread id.
+            content: Incoming user text payload.
+            session_id: Logical source/session id for the incoming event.
+            author: Display author for mirrored user step.
+            message_id: Optional explicit message id. Auto-generated when omitted.
+            metadata: Optional metadata attached to the incoming message.
+            elements: Optional Chainlit element list.
+            created_at: Optional ISO-like timestamp string for incoming payload.
+
+        Returns:
+            The resolved message id used for both mirrored step and incoming
+            dispatch payload.
+
+        Raises:
+            ValueError: If `thread_id`, `session_id`, `author`, or explicit
+                `message_id` is blank/invalid.
+            AppClosedError: If app is already closed.
+
+        Examples:
+            ```python
+            message_id = app.enqueue(
+                thread_id="thread-webhook",
+                content="New ticket opened: #1234",
+                session_id="webhook-zendesk",
+                author="Webhook",
+            )
+            ```
+        """
         if not isinstance(thread_id, str) or not thread_id.strip():
             raise ValueError("thread_id must be a non-empty string.")
         if not isinstance(session_id, str) or not session_id.strip():
@@ -109,7 +142,35 @@ class EasierlitApp:
         metadata: dict | None = None,
         elements: list[Any] | None = None,
     ) -> str:
-        """Enqueue an assistant message and return the generated message id."""
+        """Enqueue an assistant-style message step.
+
+        Args:
+            thread_id: Target thread id.
+            content: Message content text.
+            author: UI author label for the step.
+            metadata: Optional metadata dictionary.
+            elements: Optional Chainlit elements (image/file/etc.).
+
+        Returns:
+            Generated message id.
+
+        Raises:
+            AppClosedError: If app is already closed.
+
+        Notes:
+            The command is queued first and later applied by runtime dispatch.
+            Outgoing order is guaranteed within the same `thread_id`, but not as
+            a global cross-thread order.
+
+        Examples:
+            ```python
+            app.add_message(
+                thread_id=incoming.thread_id,
+                content=f"Echo: {incoming.content}",
+                author="EchoBot",
+            )
+            ```
+        """
         return self._enqueue_new_step_command(
             command="add_message",
             thread_id=thread_id,
@@ -125,6 +186,33 @@ class EasierlitApp:
         content: str,
         elements: list[Any] | None = None,
     ) -> bool:
+        """Send content directly to Discord for a mapped Discord thread.
+
+        Args:
+            thread_id: Easierlit thread id mapped to a Discord channel.
+            content: Text content to send.
+            elements: Optional elements to send as Discord attachments when
+                resolvable.
+
+        Returns:
+            `True` when sent, `False` when mapping/sender is unavailable or send
+            fails.
+
+        Raises:
+            ValueError: If `thread_id` is blank, `content` is not a string, or
+                both `content` and `elements` are empty.
+
+        Notes:
+            This method does not create or update Chainlit steps by itself.
+
+        Examples:
+            ```python
+            app.send_to_discord(
+                thread_id=incoming.thread_id,
+                content="Discord echo: done",
+            )
+            ```
+        """
         resolved_thread_id = self._require_non_empty_thread_id(thread_id)
         if not isinstance(content, str):
             raise ValueError("content must be a string.")
@@ -142,6 +230,17 @@ class EasierlitApp:
         )
 
     def discord_typing_open(self, thread_id: str) -> bool:
+        """Start Discord typing indicator for a mapped thread.
+
+        Args:
+            thread_id: Target thread id.
+
+        Returns:
+            `True` on success, `False` when no Discord sender/mapping exists.
+
+        Raises:
+            ValueError: If `thread_id` is blank.
+        """
         resolved_thread_id = self._require_non_empty_thread_id(thread_id)
         return bool(
             self._runtime.run_coroutine_sync(
@@ -150,6 +249,17 @@ class EasierlitApp:
         )
 
     def discord_typing_close(self, thread_id: str) -> bool:
+        """Stop Discord typing indicator for a mapped thread.
+
+        Args:
+            thread_id: Target thread id.
+
+        Returns:
+            `True` on success, `False` when no Discord sender/mapping exists.
+
+        Raises:
+            ValueError: If `thread_id` is blank.
+        """
         resolved_thread_id = self._require_non_empty_thread_id(thread_id)
         return bool(
             self._runtime.run_coroutine_sync(
@@ -158,6 +268,21 @@ class EasierlitApp:
         )
 
     def is_discord_thread(self, thread_id: str) -> bool:
+        """Check whether a thread is recognized as Discord-origin.
+
+        Detection order:
+        1. Runtime Discord mapping for active sessions.
+        2. Persisted thread metadata markers in data layer.
+
+        Args:
+            thread_id: Target thread id.
+
+        Returns:
+            `True` when Discord-origin markers exist, otherwise `False`.
+
+        Raises:
+            ValueError: If `thread_id` is blank.
+        """
         resolved_thread_id = self._require_non_empty_thread_id(thread_id)
         if self._runtime.is_discord_thread(resolved_thread_id):
             return True
@@ -187,7 +312,30 @@ class EasierlitApp:
         metadata: dict | None = None,
         elements: list[Any] | None = None,
     ) -> str:
-        """Enqueue a tool-call step and return the generated message id."""
+        """Enqueue a tool-call step.
+
+        Args:
+            thread_id: Target thread id.
+            tool_name: Tool display name written to step `name`.
+            content: Tool output content.
+            metadata: Optional metadata dictionary.
+            elements: Optional Chainlit elements.
+
+        Returns:
+            Generated message id.
+
+        Raises:
+            AppClosedError: If app is already closed.
+
+        Examples:
+            ```python
+            app.add_tool(
+                thread_id=incoming.thread_id,
+                tool_name="DocsSearch",
+                content='{"query":"cot full"}',
+            )
+            ```
+        """
         return self._enqueue_new_step_command(
             command="add_tool",
             thread_id=thread_id,
@@ -204,7 +352,17 @@ class EasierlitApp:
         metadata: dict | None = None,
         elements: list[Any] | None = None,
     ) -> str:
-        """Enqueue a reasoning step as a tool-call step."""
+        """Enqueue a reasoning step (`tool_name="Reasoning"`).
+
+        Args:
+            thread_id: Target thread id.
+            content: Reasoning content.
+            metadata: Optional metadata dictionary.
+            elements: Optional Chainlit elements.
+
+        Returns:
+            Generated message id.
+        """
         return self.add_tool(
             thread_id=thread_id,
             tool_name=self._THOUGHT_TOOL_NAME,
@@ -221,6 +379,18 @@ class EasierlitApp:
         metadata: dict | None = None,
         elements: list[Any] | None = None,
     ) -> None:
+        """Enqueue an update for an existing message step.
+
+        Args:
+            thread_id: Target thread id.
+            message_id: Existing step/message id.
+            content: New content text.
+            metadata: Optional metadata dictionary.
+            elements: Optional Chainlit elements.
+
+        Raises:
+            AppClosedError: If app is already closed.
+        """
         self._enqueue_existing_step_command(
             command="update_message",
             thread_id=thread_id,
@@ -239,6 +409,19 @@ class EasierlitApp:
         metadata: dict | None = None,
         elements: list[Any] | None = None,
     ) -> None:
+        """Enqueue an update for an existing tool-call step.
+
+        Args:
+            thread_id: Target thread id.
+            message_id: Existing step/message id.
+            tool_name: Updated tool display name.
+            content: New tool output content.
+            metadata: Optional metadata dictionary.
+            elements: Optional Chainlit elements.
+
+        Raises:
+            AppClosedError: If app is already closed.
+        """
         self._enqueue_existing_step_command(
             command="update_tool",
             thread_id=thread_id,
@@ -257,6 +440,15 @@ class EasierlitApp:
         metadata: dict | None = None,
         elements: list[Any] | None = None,
     ) -> None:
+        """Update a reasoning step (`tool_name="Reasoning"`).
+
+        Args:
+            thread_id: Target thread id.
+            message_id: Existing reasoning step id.
+            content: New reasoning content.
+            metadata: Optional metadata dictionary.
+            elements: Optional Chainlit elements.
+        """
         self.update_tool(
             thread_id=thread_id,
             message_id=message_id,
@@ -267,6 +459,15 @@ class EasierlitApp:
         )
 
     def delete_message(self, thread_id: str, message_id: str) -> None:
+        """Enqueue deletion of an existing message/tool step.
+
+        Args:
+            thread_id: Target thread id.
+            message_id: Existing step/message id to delete.
+
+        Raises:
+            AppClosedError: If app is already closed.
+        """
         self._enqueue_outgoing_command(
             command="delete",
             thread_id=thread_id,
@@ -280,6 +481,28 @@ class EasierlitApp:
         search: str | None = None,
         user_identifier: str | None = None,
     ):
+        """List threads from data layer with optional user filter.
+
+        Args:
+            first: Page size.
+            cursor: Pagination cursor from previous response.
+            search: Optional search query string.
+            user_identifier: Optional user identifier to filter by owner.
+
+        Returns:
+            Data-layer pagination response object for threads.
+
+        Raises:
+            DataPersistenceNotEnabledError: If data layer is unavailable.
+            ValueError: If `user_identifier` does not exist.
+
+        Examples:
+            ```python
+            threads = app.list_threads(first=10, user_identifier="admin")
+            for item in threads.data:
+                print(item["id"], item.get("name"))
+            ```
+        """
         data_layer = self._get_data_layer_or_raise()
 
         async def _list_threads():
@@ -298,6 +521,18 @@ class EasierlitApp:
         return self._runtime.run_coroutine_sync(_list_threads())
 
     def get_thread(self, thread_id: str) -> dict:
+        """Load one thread payload from data layer.
+
+        Args:
+            thread_id: Target thread id.
+
+        Returns:
+            Thread dictionary.
+
+        Raises:
+            DataPersistenceNotEnabledError: If data layer is unavailable.
+            ValueError: If thread does not exist.
+        """
         data_layer = self._get_data_layer_or_raise()
 
         async def _get_thread():
@@ -309,24 +544,38 @@ class EasierlitApp:
         return self._runtime.run_coroutine_sync(_get_thread())
 
     def get_messages(self, thread_id: str) -> dict:
-        """Return thread metadata and one ordered list of messages/tool steps."""
+        """Return thread metadata and ordered message/tool timeline.
+
+        Args:
+            thread_id: Target thread id.
+
+        Returns:
+            Dictionary with:
+            - `thread`: thread metadata without raw `steps`.
+            - `messages`: ordered message/tool steps enriched with resolved
+              elements/source metadata.
+
+        Raises:
+            DataPersistenceNotEnabledError: If data layer is unavailable.
+            ValueError: If thread does not exist.
+        """
         thread = self.get_thread(thread_id)
         return self._build_messages_payload(thread, data_layer=self._data_layer_getter())
 
     def timeline(self, thread_id: str) -> dict:
-        """Backward-compatible alias for `get_messages`."""
+        """Backward-compatible alias of `get_messages()`."""
         return self.get_messages(thread_id)
 
     def get_thread_timeline(self, thread_id: str) -> dict:
-        """Backward-compatible alias for `get_messages`."""
+        """Backward-compatible alias of `get_messages()`."""
         return self.get_messages(thread_id)
 
     def get_thread_messages_and_steps(self, thread_id: str) -> dict:
-        """Backward-compatible alias for `get_messages`."""
+        """Backward-compatible alias of `get_messages()`."""
         return self.get_messages(thread_id)
 
     def get_timeline(self, thread_id: str) -> dict:
-        """Backward-compatible alias for `get_messages`."""
+        """Backward-compatible alias of `get_messages()`."""
         return self.get_messages(thread_id)
 
     def update_thread(
@@ -336,6 +585,18 @@ class EasierlitApp:
         metadata: dict | None = None,
         tags: list[str] | None = None,
     ) -> None:
+        """Update an existing thread record.
+
+        Args:
+            thread_id: Existing thread id.
+            name: Optional thread name.
+            metadata: Optional thread metadata.
+            tags: Optional thread tags.
+
+        Raises:
+            DataPersistenceNotEnabledError: If data layer is unavailable.
+            ValueError: If thread does not exist.
+        """
         self._write_thread(
             thread_id=thread_id,
             name=name,
@@ -351,6 +612,23 @@ class EasierlitApp:
         tags: list[str] | None = None,
         thread_id: str | None = None,
     ) -> str:
+        """Create a new thread and return its id.
+
+        Args:
+            name: Optional thread name.
+            metadata: Optional thread metadata.
+            tags: Optional thread tags.
+            thread_id: Optional explicit thread id. When provided, creation uses
+                the given id and fails if it already exists.
+
+        Returns:
+            Created thread id.
+
+        Raises:
+            DataPersistenceNotEnabledError: If data layer is unavailable.
+            ValueError: If explicit `thread_id` already exists.
+            RuntimeError: If UUID-based allocation fails after retry attempts.
+        """
         if thread_id is not None:
             self._write_thread(
                 thread_id=thread_id,
@@ -415,6 +693,14 @@ class EasierlitApp:
         self._runtime.run_coroutine_sync(_write_thread())
 
     def delete_thread(self, thread_id: str) -> None:
+        """Delete a thread from data layer.
+
+        Args:
+            thread_id: Target thread id.
+
+        Raises:
+            DataPersistenceNotEnabledError: If data layer is unavailable.
+        """
         data_layer = self._get_data_layer_or_raise()
 
         async def _delete_thread():
@@ -423,6 +709,19 @@ class EasierlitApp:
         self._runtime.run_coroutine_sync(_delete_thread())
 
     def reset_thread(self, thread_id: str) -> None:
+        """Reset a thread while preserving thread id and name.
+
+        This operation removes existing steps, deletes the thread row, and
+        recreates the same `thread_id`. Recreated thread metadata and tags are
+        reset to `None`.
+
+        Args:
+            thread_id: Target thread id.
+
+        Raises:
+            DataPersistenceNotEnabledError: If data layer is unavailable.
+            ValueError: If thread does not exist.
+        """
         thread = self.get_thread(thread_id)
         thread_name = thread.get("name") if isinstance(thread.get("name"), str) else None
         raw_steps = thread.get("steps")
@@ -447,6 +746,7 @@ class EasierlitApp:
         )
 
     def close(self) -> None:
+        """Mark app as closed and enqueue dispatcher close command."""
         if self._closed.is_set():
             return
 
@@ -454,6 +754,7 @@ class EasierlitApp:
         self._outgoing_queue.put_nowait(OutgoingCommand(command="close"))
 
     def is_closed(self) -> bool:
+        """Return whether the app has been closed."""
         return self._closed.is_set()
 
     def _pop_outgoing(self, timeout: float | None = 0.1) -> OutgoingCommand:

@@ -26,6 +26,12 @@ _MIN_CHAINLIT_AUTH_SECRET_BYTES = 32
 
 
 class EasierlitServer:
+    """Top-level server bootstrap for Easierlit + Chainlit runtime.
+
+    `EasierlitServer` binds the runtime graph (`client`, `app`, auth, persistence,
+    Discord bridge) and runs Chainlit with Easierlit runtime policies.
+    """
+
     def __init__(
         self,
         client: EasierlitClient,
@@ -41,6 +47,44 @@ class EasierlitServer:
         kill_fn: Callable[[int, int], None] = os.kill,
         environ: MutableMapping[str, str] | None = None,
     ):
+        """Create a configured Easierlit server instance.
+
+        Args:
+            client: Required `EasierlitClient` instance.
+            host: Host interface for Chainlit.
+            port: Port for Chainlit.
+            root_path: Optional root path prefix for reverse-proxy deployment.
+            max_outgoing_workers: Outgoing dispatcher lane count. Must be `>= 1`.
+            auth: Optional explicit auth config. If omitted, credentials are
+                resolved from environment (`EASIERLIT_AUTH_USERNAME` and
+                `EASIERLIT_AUTH_PASSWORD`) or fallback `admin/admin`.
+            persistence: Optional persistence config. If omitted, default
+                `EasierlitPersistenceConfig()` is used.
+            discord: Optional Discord config. If omitted, Discord integration is
+                disabled.
+            run_chainlit_fn: Advanced override for Chainlit launcher, mainly for
+                testing.
+            jwt_secret_provider: Advanced secret provider override.
+            kill_fn: Advanced process-signal function override.
+            environ: Optional environment mapping override.
+
+        Raises:
+            ValueError: If `max_outgoing_workers < 1`.
+            ValueError: If auth env vars are partially configured.
+
+        Examples:
+            ```python
+            from easierlit import EasierlitClient, EasierlitServer
+
+
+            def on_message(app, incoming):
+                app.add_message(incoming.thread_id, f"Echo: {incoming.content}")
+
+
+            client = EasierlitClient(on_message=on_message)
+            server = EasierlitServer(client=client, host="0.0.0.0", port=8000)
+            ```
+        """
         self.client = client
         self.host = host
         self.port = port
@@ -60,6 +104,35 @@ class EasierlitServer:
         self._environ = environ if environ is not None else os.environ
 
     def serve(self) -> None:
+        """Run Easierlit + Chainlit server lifecycle (blocking).
+
+        This method binds runtime objects, starts workers, applies Easierlit
+        runtime policies (headless mode, sidebar open, CoT full), launches
+        Chainlit, and restores environment variables during shutdown. Worker
+        failures follow a fail-fast policy and trigger process shutdown signals.
+
+        Raises:
+            WorkerAlreadyRunningError: If `client.run(...)` is called while
+                workers are already running.
+            RunFuncExecutionError: Re-raised from `client.stop()` when a worker
+                crashed.
+            ValueError: If auth env vars are partially configured.
+            ValueError: If Discord is enabled but no non-empty token is
+                available from config/env.
+
+        Examples:
+            ```python
+            from easierlit import EasierlitClient, EasierlitServer
+
+
+            def on_message(app, incoming):
+                app.add_message(incoming.thread_id, f"Echo: {incoming.content}")
+
+
+            server = EasierlitServer(client=EasierlitClient(on_message=on_message))
+            server.serve()  # blocking
+            ```
+        """
         from chainlit.config import config
 
         runtime = get_runtime()

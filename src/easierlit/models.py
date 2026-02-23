@@ -6,6 +6,12 @@ from pydantic import BaseModel, Field
 
 
 class IncomingMessage(BaseModel):
+    """Normalized incoming message payload delivered to `on_message`.
+
+    The runtime builds this model from Chainlit/Discord/external input and
+    passes it to `EasierlitClient` message workers.
+    """
+
     thread_id: str
     session_id: str
     message_id: str
@@ -17,6 +23,8 @@ class IncomingMessage(BaseModel):
 
 
 class OutgoingCommand(BaseModel):
+    """Queued command model consumed by runtime outgoing dispatcher."""
+
     command: Literal[
         "add_message",
         "add_tool",
